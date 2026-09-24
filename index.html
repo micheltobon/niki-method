@@ -1,0 +1,883 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>My workout</title>
+<meta name="theme-color" content="#0F1E2B">
+<meta name="color-scheme" content="dark">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Strength Training">
+<style>
+:root {
+  --bg: #0F1E2B;
+  --surface: #16293A;
+  --surface-2: #1E364B;
+  --line: #2C465B;
+  --text: #EAF1F5;
+  --muted: #95ABBA;
+  --work: #F2B134;   /* buoy amber: work, go */
+  --rest: #5CC8D6;   /* water cyan: rest */
+  --done: #86D39A;
+  --danger: #F07A6A;
+  --ink-on-work: #1A1405;
+  --ink-on-rest: #06191C;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --radius-lg: 18px;
+  --radius-sm: 10px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 17px;
+  line-height: 1.45;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible, input:focus-visible { outline: 3px solid var(--work); outline-offset: 2px; }
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* ---------------- Calendar page ---------------- */
+.page {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: calc(env(safe-area-inset-top, 0px) + 20px) 16px calc(env(safe-area-inset-bottom, 0px) + 40px);
+}
+.top {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+.brand h1 { margin: 0; font-size: clamp(1.9rem, 5vw, 2.8rem); font-weight: 800; letter-spacing: -0.02em; line-height: 1.05; }
+.brand p { margin: 6px 0 0; color: var(--muted); max-width: 60ch; }
+.month-nav { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.month-nav button { background: none; border: 1px solid var(--line); border-radius: 999px; width: 36px; height: 36px; }
+.month-nav button[disabled] { opacity: .3; cursor: default; }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.btn {
+  border: 0; border-radius: 999px; padding: 14px 22px; font-weight: 700; font-size: 1.05rem;
+  background: var(--surface-2); color: var(--text);
+}
+.btn-primary { background: var(--work); color: var(--ink-on-work); }
+.btn-ghost { background: none; border: 1px solid var(--line); }
+.btn-lg { padding: 18px 28px; font-size: 1.2rem; }
+
+.weeknote { color: var(--muted); font-size: .95rem; margin: 0 0 14px; }
+
+.cal { display: grid; grid-template-columns: 44px repeat(5, minmax(0, 1fr)); gap: 6px; }
+.cal .dow { color: var(--muted); font-size: .85rem; text-align: center; padding-bottom: 2px; }
+.cal .wk {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted); font-weight: 700; font-size: .95rem;
+}
+.cell {
+  position: relative;
+  background: var(--surface); border: 1px solid transparent; border-radius: var(--radius-sm);
+  min-height: 92px; padding: 8px; text-align: left;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.cell:hover { background: var(--surface-2); }
+.cell .d { font-size: 1.5rem; font-weight: 800; line-height: 1; }
+.cell .id { font-size: .8rem; color: var(--muted); font-weight: 600; }
+.cell .pat { font-size: .82rem; color: var(--text); opacity: .85; line-height: 1.25; margin-top: auto; }
+.cell .pat .long { display: none; }
+.cell.past { opacity: .55; }
+.cell.today { border-color: var(--work); box-shadow: inset 0 0 0 1px var(--work); opacity: 1; }
+.cell.today .d { color: var(--work); }
+.cell .check {
+  position: absolute; top: 8px; right: 8px; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--done); color: #0d2414; font-size: 13px; font-weight: 900;
+  display: flex; align-items: center; justify-content: center;
+}
+.cell.empty { background: none; border: 1px dashed var(--line); cursor: default; }
+@media (min-width: 760px) {
+  .cell { min-height: 118px; padding: 12px; }
+  .cell .pat .short { display: none; }
+  .cell .pat .long { display: inline; }
+}
+.foot { color: var(--muted); font-size: .9rem; margin-top: 18px; }
+.foot p { margin: 4px 0; }
+
+/* ---------------- Sheet (day detail) ---------------- */
+.overlay {
+  position: fixed; inset: 0; background: rgba(4, 10, 16, .72);
+  display: none; align-items: flex-end; justify-content: center; z-index: 10;
+}
+.overlay.open { display: flex; }
+.sheet {
+  background: var(--surface); width: 100%; max-width: 760px; max-height: 92dvh; overflow: auto;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: 22px 20px calc(env(safe-area-inset-bottom, 0px) + 24px);
+}
+@media (min-width: 760px) {
+  .overlay { align-items: center; }
+  .sheet { border-radius: var(--radius-lg); }
+}
+.sheet-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.sheet h2 { margin: 0; font-size: 1.8rem; line-height: 1.1; }
+.sheet .sub { color: var(--muted); margin: 4px 0 0; }
+.x { background: var(--surface-2); border: 0; border-radius: 50%; width: 44px; height: 44px; font-size: 1.4rem; flex: none; }
+.sheet .start-row { margin: 18px 0 8px; display: flex; gap: 10px; flex-wrap: wrap; }
+.blk { border-top: 1px solid var(--line); padding: 16px 0; }
+.blk-h { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.blk-h h3 { margin: 0; font-size: 1.05rem; color: var(--work); font-weight: 700; }
+.blk-h button { background: none; border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; font-size: .9rem; color: var(--muted); }
+.mv { margin: 8px 0 0; font-size: 1.2rem; font-weight: 700; line-height: 1.25; }
+.mv small { display: block; font-weight: 400; color: var(--muted); font-size: .95rem; }
+.presc { margin: 8px 0 0; color: var(--muted); }
+.notes { background: var(--bg); border-radius: var(--radius-sm); padding: 14px; color: var(--muted); margin-top: 8px; }
+.notes h4 { margin: 0 0 6px; color: var(--text); font-size: 1rem; }
+
+/* ---------------- Player (full screen) ---------------- */
+.player {
+  position: fixed; inset: 0; width: 100vw; height: 100dvh; z-index: 20;
+  background: var(--bg);
+  display: none; flex-direction: column;
+  padding: calc(env(safe-area-inset-top, 0px) + 10px) max(16px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 14px) max(16px, env(safe-area-inset-left, 0px));
+  --accent: var(--work);
+  --on-accent: var(--ink-on-work);
+}
+.player.open { display: flex; }
+.player.is-rest { --accent: var(--rest); --on-accent: var(--ink-on-rest); background: #0C2230; }
+.player.is-done { --accent: var(--done); --on-accent: #0d2414; }
+
+.pbar { display: flex; align-items: center; gap: 10px; }
+.pbar .where { flex: 1; min-width: 0; }
+.pbar .where b { font-size: 1.05rem; }
+.pbar .where span { color: var(--muted); font-size: .95rem; margin-left: 6px; }
+.segs { display: flex; gap: 4px; margin-top: 6px; }
+.segs i { flex: 1; height: 5px; border-radius: 3px; background: var(--line); }
+.segs i.on { background: var(--muted); }
+.segs i.cur { background: var(--accent); }
+.icon-btn {
+  background: var(--surface); border: 0; border-radius: 12px; height: 48px; min-width: 48px; padding: 0 12px;
+  font-size: 1.15rem; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+}
+.icon-btn.on { background: var(--surface-2); color: var(--accent); }
+
+.pmain { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; padding: 14px 0 8px; }
+.plabel { color: var(--accent); font-weight: 700; font-size: clamp(1.1rem, 2.8vh, 1.6rem); margin: 0; }
+.pmoves { margin: 6px 0 0; }
+.pmove { font-size: clamp(1.8rem, 5.2vh, 3.6rem); font-weight: 800; line-height: 1.08; letter-spacing: -0.015em; margin: 4px 0 0; }
+.pmove small { display: block; font-size: clamp(1.05rem, 2.6vh, 1.6rem); font-weight: 500; color: var(--muted); letter-spacing: 0; margin-top: 2px; }
+.pmove + .pmove { margin-top: 14px; }
+.plus { color: var(--muted); font-size: clamp(1rem, 2.4vh, 1.4rem); margin: 8px 0 0; }
+.ppresc { margin: 10px 0 0; font-size: clamp(1.05rem, 2.6vh, 1.5rem); color: var(--text); }
+.ppresc span { color: var(--muted); }
+.pnote { margin: 6px 0 0; color: var(--muted); font-size: clamp(.95rem, 2.2vh, 1.25rem); }
+
+.weights { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.wbox { background: var(--surface); border-radius: var(--radius-sm); padding: 8px 12px; min-width: 150px; flex: 1; max-width: 280px; }
+.wbox label { display: block; font-size: .9rem; color: var(--muted); }
+.wbox .row { display: flex; align-items: baseline; gap: 6px; }
+.wbox input {
+  width: 100%; background: none; border: 0; border-bottom: 2px solid var(--line); color: var(--text);
+  font: 800 1.8rem var(--font); font-variant-numeric: tabular-nums; padding: 2px 0; -moz-appearance: textfield;
+}
+.wbox input::-webkit-outer-spin-button, .wbox input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.wbox .unit { color: var(--muted); }
+.wbox .last { font-size: .85rem; color: var(--muted); margin-top: 2px; }
+
+.dots { display: flex; gap: 10px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
+.dots i {
+  width: clamp(26px, 4.2vh, 40px); height: clamp(26px, 4.2vh, 40px); border-radius: 50%;
+  border: 3px solid var(--line); display: inline-block;
+}
+.dots i.done { background: var(--accent); border-color: var(--accent); }
+.dots i.cur { border-color: var(--accent); }
+.dots b { font-size: clamp(1.2rem, 3vh, 1.8rem); margin-left: 6px; }
+
+/* timer */
+.timer { margin-top: auto; padding-top: 12px; }
+.tlabel { font-size: clamp(1.3rem, 3.6vh, 2.2rem); font-weight: 700; color: var(--accent); margin: 0; line-height: 1.1; }
+.tnext { color: var(--muted); font-size: clamp(1rem, 2.4vh, 1.4rem); margin: 4px 0 0; }
+.tnum {
+  font-size: clamp(4rem, min(20vh, 30vw), 15rem); font-weight: 800; line-height: .95; letter-spacing: -0.04em;
+  margin: 4px 0 10px; color: var(--text);
+}
+.track { height: clamp(14px, 2.4vh, 24px); background: var(--surface); border-radius: 999px; overflow: hidden; }
+.fill { height: 100%; width: 100%; background: var(--accent); border-radius: 999px; transform-origin: left center; }
+.round-line { display: flex; justify-content: space-between; color: var(--muted); font-size: clamp(1rem, 2.4vh, 1.4rem); margin-top: 8px; }
+
+.countdown {
+  position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+  background: rgba(15, 30, 43, .94); z-index: 3; flex-direction: column;
+}
+.countdown.show { display: flex; }
+.countdown .n { font-size: min(60vh, 70vw); font-weight: 900; line-height: 1; color: var(--work); font-variant-numeric: tabular-nums; }
+.countdown .n.pop { animation: pop .9s ease-out; }
+.countdown p { color: var(--muted); font-size: 1.4rem; margin: 0; }
+@keyframes pop { from { transform: scale(1.25); opacity: .4; } to { transform: scale(1); opacity: 1; } }
+
+/* controls */
+.pctl { display: flex; flex-wrap: wrap; gap: 10px; align-items: stretch; padding-top: 10px; }
+.pctl .big { order: 2; flex-basis: 100%; }
+.pctl .side { flex: 1; min-height: 52px; }
+@media (min-width: 700px) {
+  .pctl { flex-wrap: nowrap; }
+  .pctl .big { order: 0; flex-basis: auto; flex: 2; }
+  .pctl .side { flex: 0 0 auto; min-height: clamp(64px, 11vh, 96px); }
+}
+.pmain.compact .pmove { font-size: clamp(1.3rem, 3.4vh, 2.2rem); }
+.pmain.compact .pmove small, .pmain.compact .ppresc { display: none; }
+.pmain.compact .dots { margin-top: 10px; }
+.pmain.compact .weights { margin-top: 10px; }
+.pmain.compact .plus { margin-top: 2px; }
+.pmain.compact .pmove + .pmove, .pmain.compact .plus + .pmove { margin-top: 4px; }
+.big {
+  flex: 1; border: 0; border-radius: var(--radius-lg); background: var(--accent); color: var(--on-accent);
+  font-weight: 800; font-size: clamp(1.4rem, 3.8vh, 2.2rem); min-height: clamp(64px, 11vh, 96px); padding: 0 16px;
+}
+.big:active { transform: scale(.985); }
+.side {
+  border: 0; border-radius: var(--radius-lg); background: var(--surface); color: var(--text);
+  font-weight: 700; font-size: clamp(1rem, 2.4vh, 1.3rem); min-height: clamp(64px, 11vh, 96px); padding: 0 16px; min-width: 88px;
+}
+.side[disabled] { opacity: .35; }
+.stepper { display: inline-flex; align-items: center; gap: 12px; margin-top: 14px; background: var(--surface); border-radius: 999px; padding: 6px; }
+.stepper button { width: 48px; height: 48px; border-radius: 50%; border: 0; background: var(--surface-2); font-size: 1.5rem; font-weight: 700; }
+.stepper span { font-size: 1.3rem; font-weight: 700; min-width: 8ch; text-align: center; }
+.ivl { margin-top: 12px; display: grid; gap: 6px; }
+.ivl div { display: flex; justify-content: space-between; gap: 10px; font-size: clamp(1.1rem, 2.8vh, 1.6rem); background: var(--surface); border-radius: var(--radius-sm); padding: 10px 14px; }
+.ivl div.rest { color: var(--rest); }
+.ivl div.cur { outline: 3px solid var(--accent); }
+
+.toast {
+  position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 24px); transform: translateX(-50%);
+  background: var(--surface-2); color: var(--text); padding: 14px 18px; border-radius: 14px; z-index: 40;
+  max-width: min(92vw, 520px); box-shadow: 0 10px 30px rgba(0,0,0,.4); display: none;
+}
+.toast.show { display: block; }
+
+@media (prefers-reduced-motion: reduce) {
+  .countdown .n.pop { animation: none; }
+}
+@media (orientation: landscape) and (max-height: 520px) {
+  .pmove { font-size: 1.6rem; }
+  .tnum { font-size: 30vh; }
+}
+</style>
+</head>
+<body>
+
+<div class="page">
+  <header class="top">
+    <div class="brand">
+      <h1 id="progTitle">Strength Workout</h1>
+      <p id="progSummary"></p>
+      <div class="month-nav" id="monthNav" hidden>
+        <button id="prevMonth" aria-label="Previous month">‹</button>
+        <span id="monthName"></span>
+        <button id="nextMonth" aria-label="Next month">›</button>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-ghost" id="fsBtn" title="Full screen and keep the screen on">Full screen</button>
+      <button class="btn btn-primary btn-lg" id="todayBtn">Today’s workout</button>
+    </div>
+  </header>
+
+  <p class="weeknote" id="weekNote"></p>
+  <div class="cal" id="cal" role="grid" aria-label="Workout calendar"></div>
+
+  <div class="foot" id="foot"></div>
+</div>
+
+<!-- Day detail -->
+<div class="overlay" id="sheetWrap" aria-hidden="true">
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" id="sheet"></div>
+</div>
+
+<!-- Player -->
+<section class="player" id="player" role="dialog" aria-modal="true" aria-label="Workout player">
+  <div class="pbar">
+    <button class="icon-btn" id="pClose" aria-label="Close workout">✕</button>
+    <div class="where">
+      <div><b id="pDay"></b><span id="pStep"></span></div>
+      <div class="segs" id="pSegs"></div>
+    </div>
+    <button class="icon-btn" id="pSound" aria-label="Sound on" title="Sound">🔊</button>
+    <button class="icon-btn" id="pFs" aria-label="Full screen" title="Full screen">⛶</button>
+  </div>
+  <div class="pmain" id="pMain"></div>
+  <div class="pctl" id="pCtl"></div>
+  <div class="countdown" id="countdown" aria-live="assertive"><div class="n" id="cdNum">3</div><p id="cdLabel"></p></div>
+</section>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script src="programs.js"></script>
+<script>
+(() => {
+"use strict";
+
+/* ============ storage (per device, per browser) ============ */
+const store = {
+  get(key, fallback) {
+    try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
+    catch (e) { return fallback; }
+  },
+  set(key, val) {
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* storage unavailable */ }
+  },
+};
+let weights = store.get("rh.weights", {});   // { movementKey: { dayId: "35" } }
+let doneDays = store.get("rh.done", {});     // { dayId: true }
+let soundOn = store.get("rh.sound", true);
+
+/* ============ helpers ============ */
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+const pad = (n) => String(n).padStart(2, "0");
+const isoLocal = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const parseDate = (iso) => { const [y, m, d] = iso.split("-").map(Number); return new Date(y, m - 1, d); };
+const fmtLong = (iso) => parseDate(iso).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+const fmtShort = (iso) => parseDate(iso).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+function fmtTime(sec) {
+  sec = Math.max(0, Math.ceil(sec));
+  if (sec < 60) return String(sec);
+  return `${Math.floor(sec / 60)}:${pad(sec % 60)}`;
+}
+const fmtRest = (sec) => sec >= 60 ? `${Math.floor(sec / 60)}:${pad(sec % 60)}` : `${sec} s`;
+
+const qp = new URLSearchParams(location.search);
+const TODAY = qp.get("today") || isoLocal(new Date());   // ?today=2026-09-23 for testing
+
+const PROGRAMS = (window.PROGRAMS || []).slice().sort((a, b) => a.id.localeCompare(b.id));
+const ALL_DAYS = PROGRAMS.flatMap((p) => p.days);
+const dayById = Object.fromEntries(ALL_DAYS.map((d) => [d.id + "@" + d.date, d]));
+const dayKey = (d) => d.id + "@" + d.date;
+
+let progIdx = Math.max(0, PROGRAMS.findIndex((p) => p.days.some((d) => d.date.slice(0, 7) === TODAY.slice(0, 7))));
+if (PROGRAMS.length && !PROGRAMS[progIdx].days.some((d) => d.date.slice(0, 7) === TODAY.slice(0, 7))) progIdx = PROGRAMS.length - 1;
+
+/* ============ toast ============ */
+let toastTimer;
+function toast(msg, ms = 3500) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), ms);
+}
+
+/* ============ sound ============ */
+let actx = null;
+function audio() {
+  if (!actx) { const AC = window.AudioContext || window.webkitAudioContext; if (AC) actx = new AC(); }
+  if (actx && actx.state === "suspended") actx.resume();
+  return actx;
+}
+function tone(freq, dur, when = 0, vol = 0.35, type = "triangle") {
+  if (!soundOn) return;
+  const c = audio(); if (!c) return;
+  const t = c.currentTime + when + 0.01;
+  const o = c.createOscillator(), g = c.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(c.destination);
+  o.start(t); o.stop(t + dur + 0.05);
+}
+const buzz = (p) => { try { navigator.vibrate && navigator.vibrate(p); } catch (e) {} };
+const SFX = {
+  tick() { tone(880, 0.14); buzz(40); },
+  go() { tone(1320, 0.18); tone(1760, 0.45, 0.18, 0.4); buzz([80, 60, 160]); },
+  rest() { tone(990, 0.2); tone(660, 0.5, 0.2); buzz(200); },
+  done() { tone(784, 0.18); tone(988, 0.18, 0.18); tone(1318, 0.6, 0.36, 0.4); buzz([100, 60, 100, 60, 250]); },
+};
+
+/* ============ wake lock + full screen ============ */
+let wakeLock = null, wantAwake = false;
+async function keepAwake(on) {
+  wantAwake = on;
+  try {
+    if (on && "wakeLock" in navigator && !wakeLock) {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    } else if (!on && wakeLock) {
+      await wakeLock.release(); wakeLock = null;
+    }
+  } catch (e) { /* denied or unsupported */ }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && wantAwake) keepAwake(true);
+  if (document.visibilityState === "visible") tick();
+});
+const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
+const fsSupported = () => !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+function toggleFullscreen() {
+  audio();
+  if (fsEl()) {
+    (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    if (!$("player").classList.contains("open")) keepAwake(false);
+    return;
+  }
+  keepAwake(true);
+  if (fsSupported()) {
+    const el = document.documentElement;
+    (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
+  } else if (!isStandalone()) {
+    toast("Screen will stay on. For true full screen on iPhone: Share → Add to Home Screen, then open it from there.", 6000);
+  } else {
+    toast("Screen will stay on while the app is open.");
+  }
+}
+function syncFsButtons() {
+  const on = !!fsEl();
+  $("fsBtn").textContent = on ? "Exit full screen" : "Full screen";
+  $("pFs").classList.toggle("on", on);
+}
+document.addEventListener("fullscreenchange", syncFsButtons);
+document.addEventListener("webkitfullscreenchange", syncFsButtons);
+$("fsBtn").onclick = toggleFullscreen;
+$("pFs").onclick = toggleFullscreen;
+
+/* ============ calendar ============ */
+const COLS = [2, 3, 4, 5, 6]; // Tue..Sat
+const shortPattern = (p) => {
+  if (/express/i.test(p)) return "Express";
+  const s = p.replace(/\b(unilateral|bilateral|horizontal|vertical)\s*/gi, "").trim();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+};
+
+function renderCalendar() {
+  const prog = PROGRAMS[progIdx];
+  if (!prog) { $("cal").innerHTML = "<p>No program loaded. Check that programs.js is next to this file.</p>"; return; }
+  document.title = `${prog.title} · Strength`;
+  $("progTitle").textContent = prog.title;
+  $("progSummary").textContent = prog.summary;
+  $("monthNav").hidden = PROGRAMS.length < 2;
+  $("monthName").textContent = prog.name;
+  $("prevMonth").disabled = progIdx === 0;
+  $("nextMonth").disabled = progIdx === PROGRAMS.length - 1;
+
+  const todayDay = prog.days.find((d) => d.date === TODAY);
+  const wk = todayDay ? todayDay.id.match(/^W(\d+)/)[1] : null;
+  $("weekNote").textContent = wk && prog.weeks[wk] ? `This week: ${prog.weeks[wk]}` : "";
+
+  const byWeek = {};
+  prog.days.forEach((d) => { const w = d.id.match(/^W(\d+)/)[1]; (byWeek[w] = byWeek[w] || []).push(d); });
+
+  let html = `<div></div>` + ["Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => `<div class="dow">${d}</div>`).join("");
+  Object.keys(byWeek).sort((a, b) => a - b).forEach((w) => {
+    html += `<div class="wk">W${w}</div>`;
+    COLS.forEach((dow) => {
+      const d = byWeek[w].find((x) => parseDate(x.date).getDay() === dow);
+      if (!d) { html += `<div class="cell empty" aria-hidden="true"></div>`; return; }
+      const cls = ["cell"];
+      if (d.date === TODAY) cls.push("today");
+      else if (d.date < TODAY) cls.push("past");
+      const done = doneDays[dayKey(d)];
+      html += `<button class="${cls.join(" ")}" data-day="${esc(dayKey(d))}" aria-label="${esc(fmtLong(d.date) + ", " + d.id + ", " + d.pattern + (done ? ", completed" : ""))}">
+        ${done ? '<span class="check">✓</span>' : ""}
+        <span class="d">${parseDate(d.date).getDate()}</span>
+        <span class="id">${esc(d.id)}</span>
+        <span class="pat"><span class="short">${esc(shortPattern(d.pattern))}</span><span class="long">${esc(d.pattern)}</span></span>
+      </button>`;
+    });
+  });
+  $("cal").innerHTML = html;
+  $("cal").querySelectorAll("[data-day]").forEach((b) => b.onclick = () => openSheet(dayById[b.dataset.day]));
+
+  const weeksHtml = Object.entries(prog.weeks || {}).map(([, t]) => `<p>${esc(t)}</p>`).join("");
+  $("foot").innerHTML = weeksHtml + `<p>Sun and Mon: no class. Tap any day to see the full workout.</p>`;
+}
+$("prevMonth").onclick = () => { if (progIdx > 0) { progIdx--; renderCalendar(); } };
+$("nextMonth").onclick = () => { if (progIdx < PROGRAMS.length - 1) { progIdx++; renderCalendar(); } };
+
+$("todayBtn").onclick = () => {
+  audio();
+  const d = ALL_DAYS.find((x) => x.date === TODAY);
+  if (d) { openPlayer(d, 0); return; }
+  const next = ALL_DAYS.filter((x) => x.date > TODAY).sort((a, b) => a.date.localeCompare(b.date))[0];
+  if (next) { toast(`No class today. Next up: ${fmtShort(next.date)}, ${next.id}.`); openSheet(next); }
+  else toast("No workouts scheduled after today. Add next month’s program to continue.");
+};
+
+/* ============ day sheet ============ */
+function prescription(b) {
+  if (b.kind === "sets") return `${b.sets} sets · ${esc(b.reps)} · ${esc(b.load)} · rest ${fmtRest(b.rest)}${b.restSuggested ? " (suggested)" : ""}`;
+  if (b.kind === "intervals") {
+    const secs = b.intervals.reduce((a, x) => a + x[1], 0) * b.rounds - (b.intervals.at(-1)[2] === "rest" ? b.intervals.at(-1)[1] : 0);
+    return `${b.rounds} rounds · about ${fmtRest(secs)}`;
+  }
+  if (b.kind === "amrap") return `As many rounds as you can in ${fmtRest(b.duration)}`;
+  return "";
+}
+function blockMoves(b) {
+  if (b.kind === "intervals") return b.intervals.map(([n, s, t]) => `<p class="mv" style="${t === "rest" ? "color:var(--rest)" : ""}">${esc(n)}<small>${s} seconds</small></p>`).join("");
+  if (b.kind === "info") return `<p class="presc">${esc(b.text)}</p>`;
+  return b.movements.map((m) => `<p class="mv">${esc(m.name)}<small>${esc(m.detail || "")}</small></p>`).join("");
+}
+function openSheet(d) {
+  const s = $("sheet");
+  s.innerHTML = `
+    <div class="sheet-head">
+      <div><h2 id="sheetTitle">${esc(fmtLong(d.date))}</h2><p class="sub">${esc(d.id)} · ${esc(d.pattern)}</p></div>
+      <button class="x" id="sheetClose" aria-label="Close">✕</button>
+    </div>
+    <div class="start-row"><button class="btn btn-primary btn-lg" id="sheetStart">${doneDays[dayKey(d)] ? "Do it again" : "Start workout"}</button></div>
+    ${d.blocks.map((b, i) => `
+      <div class="blk">
+        <div class="blk-h"><h3>${esc(b.label)}${b.note ? ` <span style="color:var(--muted);font-weight:400">· ${esc(b.note)}</span>` : ""}</h3>
+        ${d.blocks.length > 1 ? `<button data-start="${i}">Start here</button>` : ""}</div>
+        ${blockMoves(b)}
+        ${prescription(b) ? `<p class="presc">${prescription(b)}</p>` : ""}
+      </div>`).join("")}
+    ${d.notes ? `<div class="notes"><h4>Coach notes</h4>${esc(d.notes)}</div>` : ""}
+  `;
+  $("sheetWrap").classList.add("open");
+  $("sheetWrap").setAttribute("aria-hidden", "false");
+  $("sheetClose").onclick = closeSheet;
+  $("sheetStart").onclick = () => { audio(); closeSheet(); openPlayer(d, 0); };
+  s.querySelectorAll("[data-start]").forEach((b) => b.onclick = () => { audio(); closeSheet(); openPlayer(d, +b.dataset.start); });
+  $("sheetClose").focus();
+}
+function closeSheet() { $("sheetWrap").classList.remove("open"); $("sheetWrap").setAttribute("aria-hidden", "true"); }
+$("sheetWrap").addEventListener("click", (e) => { if (e.target.id === "sheetWrap") closeSheet(); });
+
+/* ============ player ============ */
+const P = {
+  day: null, bi: 0, block: null,
+  phase: "ready",     // ready | countdown | running | paused | rest | done | finished
+  set: 0,             // completed sets
+  rounds: 1, round: 0, ii: 0, // intervals
+  amrapCount: 0,
+  end: 0, dur: 0, remain: 0, lastWhole: null,
+  restOverride: null,
+  after: null,        // what to do when the countdown finishes
+};
+let loop = null;
+
+function openPlayer(d, bi) {
+  P.day = d;
+  $("player").classList.add("open");
+  document.body.style.overflow = "hidden";
+  keepAwake(true);
+  loadBlock(bi);
+  if (!loop) loop = setInterval(tick, 100);
+}
+function closePlayer() {
+  if (["running", "rest", "countdown"].includes(P.phase) && !confirm("Stop this workout? Your timer will reset.")) return;
+  $("player").classList.remove("open");
+  $("countdown").classList.remove("show");
+  document.body.style.overflow = "";
+  clearInterval(loop); loop = null;
+  if (!fsEl()) keepAwake(false);
+  renderCalendar();
+}
+$("pClose").onclick = closePlayer;
+$("pSound").onclick = () => {
+  soundOn = !soundOn; store.set("rh.sound", soundOn);
+  syncSound(); if (soundOn) { audio(); tone(1000, 0.12); }
+};
+function syncSound() {
+  $("pSound").textContent = soundOn ? "🔊" : "🔇";
+  $("pSound").setAttribute("aria-label", soundOn ? "Sound on" : "Sound off");
+}
+syncSound();
+
+function loadBlock(bi) {
+  P.bi = bi; P.block = P.day.blocks[bi];
+  P.phase = "ready"; P.set = 0; P.round = 0; P.ii = 0; P.amrapCount = 0;
+  P.rounds = P.block.rounds || 1; P.restOverride = null; P.lastWhole = null;
+  $("countdown").classList.remove("show");
+  render();
+}
+
+/* --- timer engine (wall-clock based, stays accurate if the tab sleeps) --- */
+function startTimer(seconds) {
+  P.dur = seconds; P.end = performance.now() + seconds * 1000; P.remain = seconds; P.lastWhole = Math.ceil(seconds);
+}
+function remaining() { return Math.max(0, (P.end - performance.now()) / 1000); }
+
+function tick() {
+  if (!P.day) return;
+  if (P.phase === "countdown") {
+    const r = remaining(), whole = Math.ceil(r);
+    if (whole !== P.lastWhole && whole > 0) { P.lastWhole = whole; showCount(whole); SFX.tick(); }
+    if (r <= 0) { $("countdown").classList.remove("show"); SFX.go(); const f = P.after; P.after = null; f && f(); }
+    return;
+  }
+  if (!["running", "rest"].includes(P.phase)) return;
+  const r = remaining(), whole = Math.ceil(r);
+  if (whole !== P.lastWhole) {
+    P.lastWhole = whole;
+    if (whole > 0 && whole <= 3) SFX.tick();
+  }
+  const num = $("tNum"), fill = $("tFill");
+  if (num) num.textContent = fmtTime(r);
+  if (fill) fill.style.transform = `scaleX(${P.dur ? r / P.dur : 0})`;
+  if (r <= 0) onTimerEnd();
+}
+
+function countdownThen(label, fn) {
+  P.phase = "countdown"; P.after = fn;
+  $("cdLabel").textContent = label;
+  $("countdown").classList.add("show");
+  startTimer(3); P.lastWhole = null;
+  tick();
+}
+function showCount(n) {
+  const el = $("cdNum"); el.textContent = n;
+  el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop");
+}
+
+function onTimerEnd() {
+  const b = P.block;
+  if (P.phase === "rest") {       // rest between sets is over
+    P.phase = "ready"; SFX.go(); render(); return;
+  }
+  if (b.kind === "amrap") { P.phase = "done"; SFX.done(); render(); return; }
+  if (b.kind === "intervals") {
+    let ii = P.ii + 1, round = P.round;
+    const lastRound = round === P.rounds - 1;
+    // skip the trailing rest in the final round
+    if (ii < b.intervals.length && lastRound && ii === b.intervals.length - 1 && b.intervals[ii][2] === "rest") ii = b.intervals.length;
+    if (ii >= b.intervals.length) { ii = 0; round++; }
+    if (round >= P.rounds) { P.phase = "done"; SFX.done(); render(); return; }
+    P.ii = ii; P.round = round;
+    const [, secs, type] = b.intervals[ii];
+    type === "rest" ? SFX.rest() : SFX.go();
+    startTimer(secs); render();
+  }
+}
+
+/* --- actions --- */
+function setDone() {
+  audio();
+  const b = P.block;
+  P.set = Math.min(b.sets, P.set + 1);
+  if (P.set >= b.sets) { P.phase = "done"; SFX.done(); render(); return; }
+  P.phase = "rest"; SFX.rest();
+  startTimer(P.restOverride ?? b.rest);
+  render();
+}
+function undoSet() { if (P.set > 0) { P.set--; P.phase = "ready"; render(); } }
+function skipRest() { P.phase = "ready"; SFX.go(); render(); }
+function addRest(sec) {
+  const r = remaining() + sec;
+  if (r <= 1) return skipRest();
+  P.end = performance.now() + r * 1000; P.dur = Math.max(P.dur, r); P.lastWhole = Math.ceil(r); tick();
+}
+function startIntervals() {
+  audio();
+  countdownThen(P.block.intervals[0][0], () => {
+    P.phase = "running"; P.ii = 0; P.round = 0; startTimer(P.block.intervals[0][1]); render();
+  });
+}
+function startAmrap() {
+  audio();
+  countdownThen(P.block.movements.map((m) => m.name).join(" + "), () => {
+    P.phase = "running"; P.amrapCount = 0; startTimer(P.block.duration); render();
+  });
+}
+function pause() { P.remain = remaining(); P.phase = "paused"; render(); }
+function resume() {
+  audio();
+  const r = P.remain;
+  countdownThen("Resume", () => { P.phase = "running"; P.end = performance.now() + r * 1000; P.lastWhole = Math.ceil(r); render(); });
+}
+function nextBlock() {
+  audio();
+  if (P.bi < P.day.blocks.length - 1) { loadBlock(P.bi + 1); return; }
+  doneDays[dayKey(P.day)] = true; store.set("rh.done", doneDays);
+  P.phase = "finished"; SFX.done(); render();
+}
+function prevBlock() { if (P.bi > 0) loadBlock(P.bi - 1); }
+
+/* --- weights --- */
+function lastWeight(key) {
+  const rec = weights[key]; if (!rec) return null;
+  const here = dayKey(P.day);
+  const entries = Object.entries(rec).filter(([k, v]) => k !== here && v !== "" && v != null)
+    .map(([k, v]) => ({ k, v, date: k.split("@")[1] || "" })).sort((a, b) => b.date.localeCompare(a.date));
+  return entries[0] || null;
+}
+function saveWeight(key, val) {
+  (weights[key] = weights[key] || {})[dayKey(P.day)] = val;
+  store.set("rh.weights", weights);
+}
+
+/* --- render --- */
+function render() {
+  const d = P.day, b = P.block, pl = $("player");
+  pl.classList.toggle("is-rest", P.phase === "rest" || (P.phase === "running" && b.kind === "intervals" && b.intervals[P.ii][2] === "rest"));
+  pl.classList.toggle("is-done", P.phase === "done" || P.phase === "finished");
+
+  $("pDay").textContent = `${d.id}`;
+  $("pStep").textContent = P.phase === "finished" ? "Complete" : `Block ${P.bi + 1} of ${d.blocks.length}`;
+  $("pSegs").innerHTML = d.blocks.map((_, i) => `<i class="${i < P.bi || P.phase === "finished" ? "on" : i === P.bi ? "cur" : ""}"></i>`).join("");
+
+  const main = $("pMain"), ctl = $("pCtl");
+  main.classList.toggle("compact", P.phase === "rest");
+
+  if (P.phase === "finished") {
+    main.innerHTML = `<p class="plabel">Workout complete</p>
+      <p class="pmove">Nice work.<small>${esc(fmtLong(d.date))} · ${esc(d.id)} is checked off on your calendar.</small></p>`;
+    ctl.innerHTML = `<button class="big" id="cDone">Back to calendar</button>`;
+    $("cDone").onclick = () => { P.phase = "ready"; closePlayer(); };
+    return;
+  }
+
+  const head = `<p class="plabel">${esc(b.label)}${b.note && b.kind !== "amrap" ? ` <span style="color:var(--muted);font-weight:500">· ${esc(b.note)}</span>` : ""}</p>`;
+  const last = P.bi === d.blocks.length - 1;
+  const nextLabel = last ? "Finish workout" : `Next: ${esc(d.blocks[P.bi + 1].label)}`;
+
+  /* ---- info ---- */
+  if (b.kind === "info") {
+    main.innerHTML = head + `<p class="pmove">${esc(d.pattern)}</p><p class="ppresc">${esc(b.text)}</p>`;
+    ctl.innerHTML = `<button class="big" id="cNext">${nextLabel}</button>`;
+    $("cNext").onclick = nextBlock;
+    return;
+  }
+
+  /* ---- sets ---- */
+  if (b.kind === "sets") {
+    const moves = b.movements.map((m, i) => `${i ? '<p class="plus">then</p>' : ""}<p class="pmove">${esc(m.name)}<small>${esc(m.detail || "")}</small></p>`).join("");
+    const restSec = P.restOverride ?? b.rest;
+    const wInputs = b.movements.filter((m) => m.weight).map((m) => {
+      const key = slug(m.name), cur = weights[key]?.[dayKey(d)] ?? "", lw = lastWeight(key);
+      return `<div class="wbox"><label for="w-${key}">${esc(m.name)}</label>
+        <div class="row"><input id="w-${key}" data-wkey="${key}" type="number" inputmode="decimal" min="0" step="0.5" value="${esc(cur)}" placeholder="${lw ? esc(lw.v) : "–"}"><span class="unit">lb</span></div>
+        <div class="last">${lw ? `Last: ${esc(lw.v)} lb (${esc(lw.k.split("@")[0])})` : "No weight logged yet"}</div></div>`;
+    }).join("");
+    const dots = Array.from({ length: b.sets }, (_, i) => `<i class="${i < P.set ? "done" : i === P.set && P.phase !== "done" ? "cur" : ""}"></i>`).join("");
+    const setText = P.phase === "done" ? `All ${b.sets} sets done` : P.phase === "rest" ? `Set ${P.set} of ${b.sets} done` : `Set ${P.set + 1} of ${b.sets}`;
+
+    main.innerHTML = head + `<div class="pmoves">${moves}</div>
+      <p class="ppresc">${esc(b.reps)} <span>·</span> ${esc(b.load)} <span>· rest ${fmtRest(restSec)}${b.restSuggested ? " suggested" : ""}</span></p>
+      <div class="dots" aria-label="${esc(setText)}">${dots}<b>${esc(setText)}</b></div>
+      ${wInputs ? `<div class="weights">${wInputs}</div>` : ""}
+      ${P.phase === "rest" ? `<div class="timer"><p class="tlabel">Rest</p><p class="tnext">Up next: set ${P.set + 1} of ${b.sets}</p>
+        <div class="tnum" id="tNum" aria-live="off">${fmtTime(remaining())}</div>
+        <div class="track"><div class="fill" id="tFill"></div></div></div>` : ""}`;
+    main.querySelectorAll("[data-wkey]").forEach((inp) => inp.oninput = () => saveWeight(inp.dataset.wkey, inp.value));
+
+    if (P.phase === "rest") {
+      ctl.innerHTML = `<button class="side" id="cMinus">−15 s</button><button class="side" id="cPlus">+15 s</button><button class="big" id="cSkip">Skip rest</button>`;
+      $("cMinus").onclick = () => addRest(-15);
+      $("cPlus").onclick = () => addRest(15);
+      $("cSkip").onclick = skipRest;
+    } else if (P.phase === "done") {
+      ctl.innerHTML = `<button class="side" id="cUndo">Undo</button><button class="big" id="cNext">${nextLabel}</button>`;
+      $("cUndo").onclick = undoSet; $("cNext").onclick = nextBlock;
+    } else {
+      ctl.innerHTML = `<button class="side" id="cPrev" ${P.bi === 0 ? "hidden" : ""} aria-label="Previous block">‹ Back</button>
+        ${P.set > 0 ? `<button class="side" id="cUndo">Undo</button>` : ""}
+        <button class="big" id="cSet">Set ${P.set + 1} done</button>
+        <button class="side" id="cSkipB" aria-label="Skip to next block">Skip ›</button>`;
+      $("cPrev").onclick = prevBlock;
+      $("cSet").onclick = setDone;
+      $("cSkipB").onclick = nextBlock;
+      if ($("cUndo")) $("cUndo").onclick = undoSet;
+    }
+    tick();
+    return;
+  }
+
+  /* ---- intervals ---- */
+  if (b.kind === "intervals") {
+    const running = P.phase === "running" || P.phase === "paused";
+    const list = b.intervals.map(([n, s, t], i) => `<div class="${t === "rest" ? "rest" : ""} ${running && i === P.ii ? "cur" : ""}"><span>${esc(n)}</span><span class="tnum" style="font-size:inherit;margin:0;letter-spacing:0">${s} s</span></div>`).join("");
+    if (P.phase === "ready") {
+      main.innerHTML = head + `<p class="pmove">Timed block<small>${esc(prescription(b))}</small></p>
+        <div class="ivl">${list}</div>
+        <div class="stepper" role="group" aria-label="Rounds"><button id="rMinus" aria-label="Fewer rounds">−</button><span>${P.rounds} round${P.rounds > 1 ? "s" : ""}</span><button id="rPlus" aria-label="More rounds">+</button></div>`;
+      ctl.innerHTML = `<button class="side" id="cPrev" ${P.bi === 0 ? "hidden" : ""}>‹ Back</button><button class="big" id="cStart">Start timer</button><button class="side" id="cSkipB">Skip ›</button>`;
+      $("rMinus").onclick = () => { if (P.rounds > 1) { P.rounds--; render(); } };
+      $("rPlus").onclick = () => { if (P.rounds < 10) { P.rounds++; render(); } };
+      $("cPrev").onclick = prevBlock; $("cStart").onclick = startIntervals; $("cSkipB").onclick = nextBlock;
+      return;
+    }
+    if (P.phase === "done") {
+      main.innerHTML = head + `<p class="pmove">Block done<small>${P.rounds} round${P.rounds > 1 ? "s" : ""} complete</small></p><div class="ivl">${list}</div>`;
+      ctl.innerHTML = `<button class="side" id="cAgain">Repeat</button><button class="big" id="cNext">${nextLabel}</button>`;
+      $("cAgain").onclick = () => loadBlock(P.bi); $("cNext").onclick = nextBlock;
+      return;
+    }
+    const [name, , type] = b.intervals[P.ii];
+    let nxt = null;
+    for (let k = P.ii + 1, r = P.round; ; k++) {
+      if (k >= b.intervals.length) { k = -1; r++; if (r >= P.rounds) break; continue; }
+      if (r === P.rounds - 1 && k === b.intervals.length - 1 && b.intervals[k][2] === "rest") { r++; if (r >= P.rounds) break; k = -1; continue; }
+      nxt = b.intervals[k][0]; break;
+    }
+    main.innerHTML = head + `<div class="timer" style="margin-top:0;padding-top:4px">
+      <p class="tlabel" style="font-size:clamp(2rem,6vh,4rem);color:${type === "rest" ? "var(--rest)" : "var(--text)"}">${esc(name)}</p>
+      <p class="tnext">${nxt ? `Next: ${esc(nxt)}` : "Last one"}</p></div>
+      <div class="timer"><div class="tnum" id="tNum">${fmtTime(P.phase === "paused" ? P.remain : remaining())}</div>
+      <div class="track"><div class="fill" id="tFill" style="transform:scaleX(${P.phase === "paused" ? P.remain / P.dur : 1})"></div></div>
+      <div class="round-line"><span>Round ${P.round + 1} of ${P.rounds}</span><span>${P.phase === "paused" ? "Paused" : ""}</span></div></div>`;
+    ctl.innerHTML = P.phase === "paused"
+      ? `<button class="side" id="cStop">Stop</button><button class="big" id="cRes">Resume</button>`
+      : `<button class="big" id="cPause">Pause</button>`;
+    if (P.phase === "paused") { $("cStop").onclick = () => loadBlock(P.bi); $("cRes").onclick = resume; }
+    else $("cPause").onclick = pause;
+    tick();
+    return;
+  }
+
+  /* ---- amrap ---- */
+  if (b.kind === "amrap") {
+    const moves = b.movements.map((m, i) => `${i ? '<p class="plus">then</p>' : ""}<p class="pmove">${esc(m.name)}<small>${esc(m.detail || "")}</small></p>`).join("");
+    const noteLine = b.note ? `<p class="pnote">${esc(b.note)}</p>` : "";
+    if (P.phase === "ready") {
+      main.innerHTML = head + `<div class="pmoves">${moves}</div><p class="ppresc">${esc(prescription(b))}</p>${noteLine}`;
+      ctl.innerHTML = `<button class="side" id="cPrev" ${P.bi === 0 ? "hidden" : ""}>‹ Back</button><button class="big" id="cStart">Start ${fmtRest(b.duration)}</button><button class="side" id="cSkipB">Skip ›</button>`;
+      $("cPrev").onclick = prevBlock; $("cStart").onclick = startAmrap; $("cSkipB").onclick = nextBlock;
+      return;
+    }
+    if (P.phase === "done") {
+      main.innerHTML = head + `<p class="pmove">Time!<small>${P.amrapCount} round${P.amrapCount === 1 ? "" : "s"} completed</small></p>${moves}`;
+      ctl.innerHTML = `<button class="side" id="cAgain">Repeat</button><button class="big" id="cNext">${nextLabel}</button>`;
+      $("cAgain").onclick = () => loadBlock(P.bi); $("cNext").onclick = nextBlock;
+      return;
+    }
+    main.innerHTML = head + `<div class="pmoves">${moves}</div>${noteLine}
+      <div class="timer"><div class="tnum" id="tNum">${fmtTime(P.phase === "paused" ? P.remain : remaining())}</div>
+      <div class="track"><div class="fill" id="tFill" style="transform:scaleX(${P.phase === "paused" ? P.remain / P.dur : 1})"></div></div>
+      <div class="round-line"><span>Rounds: <b style="color:var(--text)">${P.amrapCount}</b></span><span>${P.phase === "paused" ? "Paused" : ""}</span></div></div>`;
+    ctl.innerHTML = P.phase === "paused"
+      ? `<button class="side" id="cStop">Stop</button><button class="big" id="cRes">Resume</button>`
+      : `<button class="side" id="cPause">Pause</button><button class="side" id="cMinusR" ${P.amrapCount ? "" : "disabled"}>−1</button><button class="big" id="cRound">+1 round</button>`;
+    if (P.phase === "paused") { $("cStop").onclick = () => loadBlock(P.bi); $("cRes").onclick = resume; }
+    else {
+      $("cPause").onclick = pause;
+      $("cMinusR").onclick = () => { if (P.amrapCount) { P.amrapCount--; render(); } };
+      $("cRound").onclick = () => { P.amrapCount++; tone(1200, 0.08); buzz(30); render(); };
+    }
+    tick();
+  }
+}
+
+/* keyboard: space/enter = main button, esc = close */
+document.addEventListener("keydown", (e) => {
+  if ($("sheetWrap").classList.contains("open") && e.key === "Escape") { closeSheet(); return; }
+  if (!$("player").classList.contains("open")) return;
+  if (e.target.tagName === "INPUT") return;
+  if (e.key === "Escape") closePlayer();
+  if (e.key === " ") { e.preventDefault(); const bigBtn = $("pCtl").querySelector(".big"); bigBtn && bigBtn.click(); }
+});
+
+renderCalendar();
+
+/* ============ offline app (only when served over http/https) ============ */
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
+})();
+</script>
+</body>
+</html>
