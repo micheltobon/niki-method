@@ -1,4 +1,4 @@
-# Row House Strength
+#  Strength training
 
 A monthly workout calendar with a full-screen workout player: set counter, rest timer,
 3-2-1 countdowns, sounds, and a shrinking timer bar. Works offline.
