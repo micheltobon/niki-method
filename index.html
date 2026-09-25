@@ -24,6 +24,7 @@
   --work: #F2B134;   /* buoy amber: work, go */
   --rest: #5CC8D6;   /* water cyan: rest */
   --done: #86D39A;
+  --change: #B9A3F0; /* lavender: switch sides / exercise */
   --danger: #F07A6A;
   --ink-on-work: #1A1405;
   --ink-on-rest: #06191C;
@@ -149,6 +150,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--work); outl
 }
 .player.open { display: flex; }
 .player.is-rest { --accent: var(--rest); --on-accent: var(--ink-on-rest); background: #0C2230; }
+.player.is-change { --accent: var(--change); --on-accent: #1A1030; background: #171a33; }
 .player.is-done { --accent: var(--done); --on-accent: #0d2414; }
 
 .pbar { display: flex; align-items: center; gap: 10px; }
@@ -250,6 +252,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--work); outl
 .ivl { margin-top: 12px; display: grid; gap: 6px; }
 .ivl div { display: flex; justify-content: space-between; gap: 10px; font-size: clamp(1.1rem, 2.8vh, 1.6rem); background: var(--surface); border-radius: var(--radius-sm); padding: 10px 14px; }
 .ivl div.rest { color: var(--rest); }
+.ivl div.change { color: var(--change); font-size: clamp(.95rem, 2.2vh, 1.25rem); padding: 6px 14px; }
 .ivl div.cur { outline: 3px solid var(--accent); }
 
 .toast {
@@ -359,6 +362,38 @@ const ALL_DAYS = PROGRAMS.flatMap((p) => p.days);
 const dayById = Object.fromEntries(ALL_DAYS.map((d) => [d.id + "@" + d.date, d]));
 const dayKey = (d) => d.id + "@" + d.date;
 
+/* ============ workout rules applied to every month ============ */
+const CHANGE_SECS = 5;      // pause between exercises / sides in timed blocks
+const STRETCH_SECS = 300;   // cool-down after every workout
+// Insert a 5 s "Change" between back-to-back exercises. The time comes out of
+// the block's rest, so 20 L + 20 R + 20 rest becomes 20 L + 5 change + 20 R + 15 rest.
+function withChanges(list) {
+  if (list.some((x) => x[2] === "change")) return list;
+  const out = [];
+  let added = 0;
+  list.forEach((iv, i) => {
+    const prev = list[i - 1];
+    if (prev && prev[2] === "work" && iv[2] === "work") { out.push(["Change", CHANGE_SECS, "change"]); added++; }
+    out.push(iv.slice());
+  });
+  const restIdx = out.map((x) => x[2]).lastIndexOf("rest");
+  if (restIdx >= 0) {
+    out[restIdx][1] = Math.max(0, out[restIdx][1] - added * CHANGE_SECS);
+    if (out[restIdx][1] === 0) out.splice(restIdx, 1);
+  }
+  return out;
+}
+const STRETCH_BLOCK = {
+  kind: "timer", label: "Cool-down stretch", duration: STRETCH_SECS,
+  text: "Stretch the muscles you trained today. Hold each stretch 30–45 s and breathe. A soft chime plays every minute as a cue to switch stretches.",
+};
+ALL_DAYS.forEach((d) => {
+  if (d._prepared) return;
+  d.blocks = d.blocks.map((b) => b.kind === "intervals" ? { ...b, intervals: withChanges(b.intervals) } : b);
+  d.blocks.push(STRETCH_BLOCK);
+  d._prepared = true;
+});
+
 let progIdx = Math.max(0, PROGRAMS.findIndex((p) => p.days.some((d) => d.date.slice(0, 7) === TODAY.slice(0, 7))));
 if (PROGRAMS.length && !PROGRAMS[progIdx].days.some((d) => d.date.slice(0, 7) === TODAY.slice(0, 7))) progIdx = PROGRAMS.length - 1;
 
@@ -393,6 +428,8 @@ const SFX = {
   tick() { tone(880, 0.14); buzz(40); },
   go() { tone(1320, 0.18); tone(1760, 0.45, 0.18, 0.4); buzz([80, 60, 160]); },
   rest() { tone(990, 0.2); tone(660, 0.5, 0.2); buzz(200); },
+  change() { tone(740, 0.12); tone(740, 0.12, 0.18); tone(988, 0.25, 0.36); buzz([60, 60, 60]); },
+  chime() { tone(1175, 0.5, 0, 0.25, "sine"); tone(1568, 0.8, 0.12, 0.2, "sine"); buzz(80); },
   done() { tone(784, 0.18); tone(988, 0.18, 0.18); tone(1318, 0.6, 0.36, 0.4); buzz([100, 60, 100, 60, 250]); },
 };
 
@@ -513,11 +550,14 @@ function prescription(b) {
     return `${b.rounds} rounds · about ${fmtRest(secs)}`;
   }
   if (b.kind === "amrap") return `As many rounds as you can in ${fmtRest(b.duration)}`;
+  if (b.kind === "timer") return `${fmtRest(b.duration)} timer`;
   return "";
 }
 function blockMoves(b) {
-  if (b.kind === "intervals") return b.intervals.map(([n, s, t]) => `<p class="mv" style="${t === "rest" ? "color:var(--rest)" : ""}">${esc(n)}<small>${s} seconds</small></p>`).join("");
-  if (b.kind === "info") return `<p class="presc">${esc(b.text)}</p>`;
+  if (b.kind === "intervals") return b.intervals.map(([n, s, t]) => t === "change"
+    ? `<p class="presc" style="color:var(--change)">↳ ${s} s change</p>`
+    : `<p class="mv" style="${t === "rest" ? "color:var(--rest)" : ""}">${esc(n)}<small>${s} seconds</small></p>`).join("");
+  if (b.kind === "info" || b.kind === "timer") return `<p class="presc">${esc(b.text)}</p>`;
   return b.movements.map((m) => `<p class="mv">${esc(m.name)}<small>${esc(m.detail || "")}</small></p>`).join("");
 }
 function openSheet(d) {
@@ -615,6 +655,7 @@ function tick() {
   if (whole !== P.lastWhole) {
     P.lastWhole = whole;
     if (whole > 0 && whole <= 3) SFX.tick();
+    else if (P.block.kind === "timer" && whole > 3 && whole < P.dur && whole % 60 === 0) SFX.chime();
   }
   const num = $("tNum"), fill = $("tFill");
   if (num) num.textContent = fmtTime(r);
@@ -639,7 +680,7 @@ function onTimerEnd() {
   if (P.phase === "rest") {       // rest between sets is over
     P.phase = "ready"; SFX.go(); render(); return;
   }
-  if (b.kind === "amrap") { P.phase = "done"; SFX.done(); render(); return; }
+  if (b.kind === "amrap" || b.kind === "timer") { P.phase = "done"; SFX.done(); render(); return; }
   if (b.kind === "intervals") {
     let ii = P.ii + 1, round = P.round;
     const lastRound = round === P.rounds - 1;
@@ -649,7 +690,7 @@ function onTimerEnd() {
     if (round >= P.rounds) { P.phase = "done"; SFX.done(); render(); return; }
     P.ii = ii; P.round = round;
     const [, secs, type] = b.intervals[ii];
-    type === "rest" ? SFX.rest() : SFX.go();
+    type === "rest" ? SFX.rest() : type === "change" ? SFX.change() : SFX.go();
     startTimer(secs); render();
   }
 }
@@ -679,7 +720,7 @@ function startIntervals() {
 }
 function startAmrap() {
   audio();
-  countdownThen(P.block.movements.map((m) => m.name).join(" + "), () => {
+  countdownThen(P.block.kind === "timer" ? P.block.label : P.block.movements.map((m) => m.name).join(" + "), () => {
     P.phase = "running"; P.amrapCount = 0; startTimer(P.block.duration); render();
   });
 }
@@ -713,7 +754,9 @@ function saveWeight(key, val) {
 /* --- render --- */
 function render() {
   const d = P.day, b = P.block, pl = $("player");
-  pl.classList.toggle("is-rest", P.phase === "rest" || (P.phase === "running" && b.kind === "intervals" && b.intervals[P.ii][2] === "rest"));
+  const ivType = (P.phase === "running" || P.phase === "paused") && b.kind === "intervals" ? b.intervals[P.ii][2] : null;
+  pl.classList.toggle("is-rest", P.phase === "rest" || ivType === "rest");
+  pl.classList.toggle("is-change", ivType === "change");
   pl.classList.toggle("is-done", P.phase === "done" || P.phase === "finished");
 
   $("pDay").textContent = `${d.id}`;
@@ -790,7 +833,7 @@ function render() {
   /* ---- intervals ---- */
   if (b.kind === "intervals") {
     const running = P.phase === "running" || P.phase === "paused";
-    const list = b.intervals.map(([n, s, t], i) => `<div class="${t === "rest" ? "rest" : ""} ${running && i === P.ii ? "cur" : ""}"><span>${esc(n)}</span><span class="tnum" style="font-size:inherit;margin:0;letter-spacing:0">${s} s</span></div>`).join("");
+    const list = b.intervals.map(([n, s, t], i) => `<div class="${t === "work" ? "" : t} ${running && i === P.ii ? "cur" : ""}"><span>${esc(n)}</span><span class="tnum" style="font-size:inherit;margin:0;letter-spacing:0">${s} s</span></div>`).join("");
     if (P.phase === "ready") {
       main.innerHTML = head + `<p class="pmove">Timed block<small>${esc(prescription(b))}</small></p>
         <div class="ivl">${list}</div>
@@ -812,11 +855,12 @@ function render() {
     for (let k = P.ii + 1, r = P.round; ; k++) {
       if (k >= b.intervals.length) { k = -1; r++; if (r >= P.rounds) break; continue; }
       if (r === P.rounds - 1 && k === b.intervals.length - 1 && b.intervals[k][2] === "rest") { r++; if (r >= P.rounds) break; k = -1; continue; }
+      if (b.intervals[k][2] === "change") continue;
       nxt = b.intervals[k][0]; break;
     }
     main.innerHTML = head + `<div class="timer" style="margin-top:0;padding-top:4px">
-      <p class="tlabel" style="font-size:clamp(2rem,6vh,4rem);color:${type === "rest" ? "var(--rest)" : "var(--text)"}">${esc(name)}</p>
-      <p class="tnext">${nxt ? `Next: ${esc(nxt)}` : "Last one"}</p></div>
+      <p class="tlabel" style="font-size:clamp(2rem,6vh,4rem);color:${type === "work" ? "var(--text)" : "var(--accent)"}">${type === "change" ? "Change" : esc(name)}</p>
+      <p class="tnext" style="${type === "change" ? "font-size:clamp(1.4rem,4vh,2.4rem);color:var(--text)" : ""}">${nxt ? `${type === "change" ? "Get ready" : "Next"}: ${esc(nxt)}` : "Last one"}</p></div>
       <div class="timer"><div class="tnum" id="tNum">${fmtTime(P.phase === "paused" ? P.remain : remaining())}</div>
       <div class="track"><div class="fill" id="tFill" style="transform:scaleX(${P.phase === "paused" ? P.remain / P.dur : 1})"></div></div>
       <div class="round-line"><span>Round ${P.round + 1} of ${P.rounds}</span><span>${P.phase === "paused" ? "Paused" : ""}</span></div></div>`;
@@ -830,17 +874,18 @@ function render() {
   }
 
   /* ---- amrap ---- */
-  if (b.kind === "amrap") {
-    const moves = b.movements.map((m, i) => `${i ? '<p class="plus">then</p>' : ""}<p class="pmove">${esc(m.name)}<small>${esc(m.detail || "")}</small></p>`).join("");
+  if (b.kind === "amrap" || b.kind === "timer") {
+    const isTimer = b.kind === "timer";
+    const moves = isTimer ? `<p class="pmove">Stretch</p><p class="ppresc">${esc(b.text)}</p>` : b.movements.map((m, i) => `${i ? '<p class="plus">then</p>' : ""}<p class="pmove">${esc(m.name)}<small>${esc(m.detail || "")}</small></p>`).join("");
     const noteLine = b.note ? `<p class="pnote">${esc(b.note)}</p>` : "";
     if (P.phase === "ready") {
-      main.innerHTML = head + `<div class="pmoves">${moves}</div><p class="ppresc">${esc(prescription(b))}</p>${noteLine}`;
+      main.innerHTML = head + `<div class="pmoves">${moves}</div>${isTimer ? "" : `<p class="ppresc">${esc(prescription(b))}</p>`}${noteLine}`;
       ctl.innerHTML = `<button class="side" id="cPrev" ${P.bi === 0 ? "hidden" : ""}>‹ Back</button><button class="big" id="cStart">Start ${fmtRest(b.duration)}</button><button class="side" id="cSkipB">Skip ›</button>`;
       $("cPrev").onclick = prevBlock; $("cStart").onclick = startAmrap; $("cSkipB").onclick = nextBlock;
       return;
     }
     if (P.phase === "done") {
-      main.innerHTML = head + `<p class="pmove">Time!<small>${P.amrapCount} round${P.amrapCount === 1 ? "" : "s"} completed</small></p>${moves}`;
+      main.innerHTML = head + (isTimer ? `<p class="pmove">Stretch done<small>Nice and loose.</small></p>` : `<p class="pmove">Time!<small>${P.amrapCount} round${P.amrapCount === 1 ? "" : "s"} completed</small></p>${moves}`);
       ctl.innerHTML = `<button class="side" id="cAgain">Repeat</button><button class="big" id="cNext">${nextLabel}</button>`;
       $("cAgain").onclick = () => loadBlock(P.bi); $("cNext").onclick = nextBlock;
       return;
@@ -848,12 +893,16 @@ function render() {
     main.innerHTML = head + `<div class="pmoves">${moves}</div>${noteLine}
       <div class="timer"><div class="tnum" id="tNum">${fmtTime(P.phase === "paused" ? P.remain : remaining())}</div>
       <div class="track"><div class="fill" id="tFill" style="transform:scaleX(${P.phase === "paused" ? P.remain / P.dur : 1})"></div></div>
-      <div class="round-line"><span>Rounds: <b style="color:var(--text)">${P.amrapCount}</b></span><span>${P.phase === "paused" ? "Paused" : ""}</span></div></div>`;
+      <div class="round-line"><span>${isTimer ? "" : `Rounds: <b style="color:var(--text)">${P.amrapCount}</b>`}</span><span>${P.phase === "paused" ? "Paused" : ""}</span></div></div>`;
     ctl.innerHTML = P.phase === "paused"
       ? `<button class="side" id="cStop">Stop</button><button class="big" id="cRes">Resume</button>`
+      : isTimer ? `<button class="side" id="cEnd">End early</button><button class="big" id="cPause">Pause</button>`
       : `<button class="side" id="cPause">Pause</button><button class="side" id="cMinusR" ${P.amrapCount ? "" : "disabled"}>−1</button><button class="big" id="cRound">+1 round</button>`;
     if (P.phase === "paused") { $("cStop").onclick = () => loadBlock(P.bi); $("cRes").onclick = resume; }
-    else {
+    else if (isTimer) {
+      $("cPause").onclick = pause;
+      $("cEnd").onclick = () => { P.phase = "done"; SFX.done(); render(); };
+    } else {
       $("cPause").onclick = pause;
       $("cMinusR").onclick = () => { if (P.amrapCount) { P.amrapCount--; render(); } };
       $("cRound").onclick = () => { P.amrapCount++; tone(1200, 0.08); buzz(30); render(); };

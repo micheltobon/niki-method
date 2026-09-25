@@ -1,6 +1,6 @@
 {
-  "name": "Row House Strength",
-  "short_name": "Row House",
+  "name": "Strength Training",
+  "short_name": "Strength",
   "description": "Monthly strength calendar with a full-screen workout timer.",
   "start_url": "./",
   "scope": "./",
