@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Erg POC · Concept2 PM5</title>
+<meta name="theme-color" content="#0F1E2B">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="icons/icon-192.png">
+<style>
+:root {
+  --bg: #0F1E2B; --surface: #16293A; --surface-2: #1E364B; --line: #2C465B;
+  --text: #EAF1F5; --muted: #95ABBA; --work: #F2B134; --rest: #5CC8D6;
+  --done: #86D39A; --change: #B9A3F0; --danger: #F07A6A;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; }
+</style>
+</head>
+<body>
+<noscript>This page needs JavaScript.</noscript>
+<script>
+/*
+  Erg module (proof of concept) — Concept2 PM5 over Bluetooth.
+  ------------------------------------------------------------------
+  Standalone proof of concept. Not connected to the workout schedule
+  (index.html); see ERG-PLAN.md for the integration plan.
+
+  Flow: set up your piece on the PM5 (Just Row, 2000 m, intervals...),
+  tap Connect, row. The app follows the monitor, shows live numbers and
+  saves a summary when the PM5 finishes the piece.
+
+  Bluetooth support: Chrome/Edge on Android, Windows, Mac, ChromeOS.
+  iPhone/iPad: Safari can't do Bluetooth; open the site in the Bluefy
+  browser instead. "Demo" mode works everywhere (fake data).
+
+  Protocol: Concept2 PM Bluetooth Smart Communication Interface
+  Definition. All PM5 UUIDs are CE06xxxx-43E5-11E4-916C-0800200C9A66.
+*/
+(() => {
+  "use strict";
+
+  const uuid = (short) => `ce06${short}-43e5-11e4-916c-0800200c9a66`;
+  const SVC_ROWING = uuid("0030");
+  const SVC_INFO = uuid("0010");
+  const CH = {
+    general: uuid("0031"),     // time, distance, workout state
+    status1: uuid("0032"),     // pace, avg pace, stroke rate, heart rate
+    status2: uuid("0033"),     // calories, avg power, last split
+    summary: uuid("0039"),     // end-of-workout summary
+  };
+
+  const WORKOUT_TYPE = ["Just row", "Just row (splits)", "Distance", "Distance (splits)", "Time", "Time (splits)",
+    "Time intervals", "Distance intervals", "Variable intervals", "Variable intervals", "Calories", "Watt-minutes", "Calorie intervals"];
+  const WORKOUT_STATE = ["Ready", "Rowing", "Paused", "Rest", "Work", "Work", "Rest → work", "Rest → work",
+    "Work → rest", "Work → rest", "Finished", "Finished", "Saved", "Ready"];
+  const ENDED = new Set([10, 11, 12]);
+
+  const STORE_KEY = "erg.sessions";
+  const SCHEMA = 1;
+
+  /* ---------------- storage ---------------- */
+  const loadSessions = () => { try { return JSON.parse(localStorage.getItem(STORE_KEY) || "[]"); } catch (e) { return []; } };
+  const saveSessions = (list) => { try { localStorage.setItem(STORE_KEY, JSON.stringify(list)); } catch (e) {} };
+
+  /* ---------------- formatting ---------------- */
+  const pad = (n) => String(n).padStart(2, "0");
+  function fmtPace(sec) {            // seconds per 500 m -> 2:04.3
+    if (!sec || !isFinite(sec) || sec <= 0 || sec > 3599) return "–";
+    const m = Math.floor(sec / 60), s = sec - m * 60;
+    return `${m}:${s < 10 ? "0" : ""}${s.toFixed(1)}`;
+  }
+  function fmtClock(sec) {           // 754.2 -> 12:34.2
+    if (sec == null || !isFinite(sec)) return "–";
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    const ss = pad(Math.floor(s));
+    return h ? `${h}:${pad(m)}:${ss}` : `${m}:${ss}`;
+  }
+  const fmtInt = (n) => (n == null || !isFinite(n) ? "–" : Math.round(n).toLocaleString());
+  const wattsFromPace = (pace) => (pace > 0 ? 2.8 / Math.pow(pace / 500, 3) : 0); // Concept2 formula
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  /* ---------------- byte parsing (little endian) ---------------- */
+  const u8 = (dv, o) => dv.getUint8(o);
+  const u16 = (dv, o) => dv.getUint8(o) | (dv.getUint8(o + 1) << 8);
+  const u24 = (dv, o) => dv.getUint8(o) | (dv.getUint8(o + 1) << 8) | (dv.getUint8(o + 2) << 16);
+
+  const parse = {
+    general: (dv) => ({
+      elapsed: u24(dv, 0) / 100, distance: u24(dv, 3) / 10,
+      workoutType: u8(dv, 6), intervalType: u8(dv, 7), workoutState: u8(dv, 8),
+      rowingState: u8(dv, 9), strokeState: u8(dv, 10),
+      dragFactor: dv.byteLength > 18 ? u8(dv, 18) : null,
+    }),
+    status1: (dv) => {
+      const hr = u8(dv, 6);
+      return {
+        elapsed: u24(dv, 0) / 100, speed: u16(dv, 3) / 1000, spm: u8(dv, 5),
+        hr: hr && hr !== 255 ? hr : null,
+        pace: u16(dv, 7) / 100, avgPace: u16(dv, 9) / 100,
+      };
+    },
+    status2: (dv) => ({
+      elapsed: u24(dv, 0) / 100, intervalCount: u8(dv, 3),
+      avgPower: u16(dv, 4), calories: u16(dv, 6),
+      lastSplitTime: dv.byteLength >= 17 ? u24(dv, 14) / 10 : 0,
+      lastSplitDist: dv.byteLength >= 20 ? u24(dv, 17) : 0,
+    }),
+    summary: (dv) => ({
+      time: u24(dv, 4) / 100, distance: u24(dv, 7) / 10, avgSpm: u8(dv, 10),
+      avgHr: u8(dv, 12) || null, maxHr: u8(dv, 14) || null, dragFactor: u8(dv, 15),
+      workoutType: u8(dv, 17), avgPace: dv.byteLength >= 20 ? u16(dv, 18) / 10 : 0,
+    }),
+  };
+
+  /* ---------------- live state + session tracking ---------------- */
+  const live = {};
+  let session = null;          // the piece currently being rowed
+  let lastSaved = null;        // summary shown after a piece ends
+  let endTimer = null;
+  const rawLog = [];
+
+  function resetLive() {
+    Object.assign(live, { elapsed: 0, distance: 0, pace: 0, avgPace: 0, spm: 0, hr: null, calories: 0,
+      avgPower: 0, workoutType: null, workoutState: null, rowingState: 0, dragFactor: null });
+  }
+  resetLive();
+
+  function startSession() {
+    session = {
+      schema: SCHEMA, id: `s${Date.now()}`, source: demo.on ? "demo" : "pm5",
+      device: device ? device.name : demo.on ? "Demo PM5" : null,
+      startedAt: new Date().toISOString(), workoutType: live.workoutType,
+      spmSum: 0, spmN: 0, hrSum: 0, hrN: 0, maxHr: 0, splits: [], lastSplitKey: "",
+    };
+  }
+
+  function finishSession(summary, partial = false) {
+    clearTimeout(endTimer); endTimer = null;
+    if (!session) return;
+    const s = session; session = null;
+    const time = summary?.time || live.elapsed;
+    const distance = summary?.distance || live.distance;
+    if (!distance || distance < 1) return;             // nothing rowed, nothing to save
+    const avgPace = summary?.avgPace || live.avgPace || (time / distance) * 500;
+    const record = {
+      schema: SCHEMA, id: s.id, source: s.source, device: s.device,
+      startedAt: s.startedAt, endedAt: new Date().toISOString(),
+      workoutType: WORKOUT_TYPE[summary?.workoutType ?? s.workoutType ?? live.workoutType] || "Row",
+      distance: Math.round(distance), time: Math.round(time * 10) / 10,
+      avgPace: Math.round(avgPace * 10) / 10,
+      avgWatts: Math.round(live.avgPower || wattsFromPace(avgPace)),
+      avgSpm: summary?.avgSpm || (s.spmN ? Math.round(s.spmSum / s.spmN) : null),
+      avgHr: summary?.avgHr || (s.hrN ? Math.round(s.hrSum / s.hrN) : null),
+      maxHr: summary?.maxHr || s.maxHr || null,
+      calories: live.calories || null,
+      dragFactor: summary?.dragFactor || live.dragFactor || null,
+      splits: s.splits, partial,
+    };
+    const list = loadSessions(); list.unshift(record); saveSessions(list);
+    lastSaved = record;
+    beep(true);
+    view = "summary"; render();
+  }
+
+  function onData(kind, dv) {
+    if (ui.debug) { rawLog.unshift(`${kind} ${[...new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength)].map((b) => b.toString(16).padStart(2, "0")).join(" ")}`); rawLog.length = Math.min(rawLog.length, 40); }
+    let d;
+    try { d = parse[kind](dv); } catch (e) { return; }
+
+    if (kind === "summary") { finishSession(d); return; }
+
+    // a new piece on the PM5 resets its clock
+    if (d.elapsed + 2 < live.elapsed && session) finishSession(null, true);
+
+    if (kind === "general") {
+      Object.assign(live, { elapsed: d.elapsed, distance: d.distance, workoutType: d.workoutType,
+        workoutState: d.workoutState, rowingState: d.rowingState, dragFactor: d.dragFactor ?? live.dragFactor });
+      if (!session && d.elapsed > 0 && !ENDED.has(d.workoutState)) startSession();
+      if (session && ENDED.has(d.workoutState) && !endTimer) {
+        // normally the PM5 sends its summary; fall back if it doesn't arrive
+        endTimer = setTimeout(() => finishSession(null), 4000);
+      }
+    } else if (kind === "status1") {
+      Object.assign(live, { pace: d.pace, avgPace: d.avgPace, spm: d.spm, hr: d.hr });
+      if (session && d.spm > 0) { session.spmSum += d.spm; session.spmN++; }
+      if (session && d.hr) { session.hrSum += d.hr; session.hrN++; session.maxHr = Math.max(session.maxHr, d.hr); }
+    } else if (kind === "status2") {
+      Object.assign(live, { calories: d.calories, avgPower: d.avgPower });
+      const key = `${d.lastSplitTime}/${d.lastSplitDist}`;
+      if (session && d.lastSplitDist > 0 && key !== session.lastSplitKey) {
+        session.lastSplitKey = key;
+        session.splits.push({ time: d.lastSplitTime, distance: d.lastSplitDist, pace: Math.round((d.lastSplitTime / d.lastSplitDist) * 5000) / 10 });
+      }
+    }
+    scheduleLive();
+  }
+
+  /* ---------------- Bluetooth ---------------- */
+  let device = null, server = null;
+  let conn = "idle";   // idle | connecting | connected | error
+  let connMsg = "";
+
+  const btAvailable = () => !!(navigator.bluetooth && navigator.bluetooth.requestDevice);
+
+  async function connect() {
+    if (!btAvailable()) { view = "nobt"; render(); return; }
+    stopDemo();
+    try {
+      conn = "connecting"; connMsg = "Choose your PM5…"; render();
+      if (!device) {
+        device = await navigator.bluetooth.requestDevice({
+          filters: [{ namePrefix: "PM5" }],
+          optionalServices: [SVC_ROWING, SVC_INFO],
+        });
+        device.addEventListener("gattserverdisconnected", onDisconnected);
+      }
+      connMsg = "Connecting…"; render();
+      server = await device.gatt.connect();
+      const svc = await server.getPrimaryService(SVC_ROWING);
+      for (const [kind, id] of Object.entries(CH)) {
+        const ch = await svc.getCharacteristic(id);
+        ch.addEventListener("characteristicvaluechanged", (e) => onData(kind, e.target.value));
+        await ch.startNotifications();
+      }
+      conn = "connected"; connMsg = device.name || "PM5"; resetLive(); render();
+    } catch (e) {
+      conn = "error";
+      connMsg = e && e.name === "NotFoundError" ? "No PM5 selected." : `Couldn’t connect: ${e && e.message ? e.message : e}`;
+      render();
+    }
+  }
+  function disconnect() {
+    if (session) finishSession(null, true);
+    if (device && device.gatt.connected) device.gatt.disconnect();
+    conn = "idle"; connMsg = ""; render();
+  }
+  function onDisconnected() {
+    if (session) finishSession(null, true);
+    if (conn !== "idle") { conn = "error"; connMsg = "PM5 disconnected. Tap Reconnect."; render(); }
+  }
+
+  /* ---------------- demo mode (fake PM5, same parser) ---------------- */
+  const demo = { on: false, timer: null, t: 0, d: 0, cal: 0, splitT: 0, splitD: 0, last: { t: 0, d: 0 } };
+  const bytes = (n) => new DataView(new ArrayBuffer(n));
+  const w16 = (dv, o, v) => { dv.setUint8(o, v & 255); dv.setUint8(o + 1, (v >> 8) & 255); };
+  const w24 = (dv, o, v) => { w16(dv, o, v); dv.setUint8(o + 2, (v >> 16) & 255); };
+
+  function startDemo() {
+    if (conn === "connected") return;
+    Object.assign(demo, { on: true, t: 0, d: 0, cal: 0, last: { t: 0, d: 0 }, split: null });
+    resetLive(); render();
+    demo.timer = setInterval(() => {
+      const pace = 124 + Math.sin(demo.t / 9) * 4 + (Math.random() - 0.5) * 3;   // ~2:04
+      demo.t += 0.5; demo.d += (500 / pace) * 0.5; demo.cal += 0.05;
+      const avg = (demo.t / demo.d) * 500;
+      const g = bytes(19); w24(g, 0, demo.t * 100); w24(g, 3, demo.d * 10); g.setUint8(6, 0); g.setUint8(8, 1); g.setUint8(9, 1); g.setUint8(18, 115);
+      const a = bytes(17); w24(a, 0, demo.t * 100); w16(a, 3, (500 / pace) * 1000); a.setUint8(5, 24 + Math.round(Math.random() * 2));
+      a.setUint8(6, 140 + Math.round(demo.t / 10)); w16(a, 7, pace * 100); w16(a, 9, avg * 100);
+      const b = bytes(20); w24(b, 0, demo.t * 100); w16(b, 4, wattsFromPace(avg)); w16(b, 6, demo.cal);
+      if (demo.d - demo.last.d >= 100) { demo.split = { t: demo.t - demo.last.t, d: Math.round(demo.d - demo.last.d) }; demo.last = { t: demo.t, d: demo.d }; }
+      if (demo.split) { w24(b, 14, demo.split.t * 10); w24(b, 17, demo.split.d); }   // PM5 repeats the last split
+      onData("general", g); onData("status1", a); onData("status2", b);
+    }, 500);
+  }
+  function stopDemo(send = false) {
+    if (!demo.on) return;
+    clearInterval(demo.timer); demo.on = false;
+    if (send && demo.d > 0) {
+      const s = bytes(20); w24(s, 4, demo.t * 100); w24(s, 7, demo.d * 10); s.setUint8(10, 25);
+      s.setUint8(12, 150); s.setUint8(14, 162); s.setUint8(15, 115); s.setUint8(17, 0); w16(s, 18, (demo.t / demo.d) * 5000);
+      onData("summary", s);
+    } else render();
+  }
+
+  /* ---------------- sound + wake lock ---------------- */
+  let actx = null;
+  function beep(done) {
+    try {
+      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      if (actx.state === "suspended") actx.resume();
+      [0, 0.18, 0.36].slice(0, done ? 3 : 1).forEach((when, i) => {
+        const o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime + when;
+        o.frequency.value = [784, 988, 1318][i]; o.type = "triangle";
+        g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.35, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+        o.connect(g); g.connect(actx.destination); o.start(t); o.stop(t + 0.45);
+      });
+    } catch (e) {}
+  }
+  let wake = null;
+  async function keepAwake(on) {
+    try {
+      if (on && "wakeLock" in navigator && !wake) { wake = await navigator.wakeLock.request("screen"); wake.addEventListener("release", () => { wake = null; }); }
+      if (!on && wake) { await wake.release(); wake = null; }
+    } catch (e) {}
+  }
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && ui.open) keepAwake(true); });
+
+  /* ---------------- UI ---------------- */
+  const css = `
+  .erg { position: fixed; inset: 0; z-index: 30; background: var(--bg, #0F1E2B); color: var(--text, #EAF1F5); display: none; flex-direction: column;
+    height: 100dvh; padding: calc(env(safe-area-inset-top, 0px) + 10px) max(16px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 14px) max(16px, env(safe-area-inset-left, 0px));
+    font-family: var(--font, system-ui, sans-serif); }
+  .erg.open { display: flex; }
+  .erg :where(button) { font: inherit; color: inherit; cursor: pointer; border: 0; }
+  .erg-top { display: flex; align-items: center; gap: 10px; }
+  .erg-title { font-weight: 800; font-size: 1.1rem; }
+  .erg-x { background: var(--surface, #16293A); border-radius: 12px; width: 48px; height: 48px; font-size: 1.15rem; }
+  .erg-status { flex: 1; min-width: 0; font-size: .95rem; color: var(--muted, #95ABBA); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .erg-status b { color: var(--text, #EAF1F5); }
+  .erg-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; background: var(--line, #2C465B); vertical-align: middle; }
+  .erg-dot.on { background: var(--done, #86D39A); } .erg-dot.demo { background: var(--change, #B9A3F0); } .erg-dot.err { background: var(--danger, #F07A6A); }
+  .erg-tab { background: var(--surface, #16293A); border-radius: 12px; height: 48px; padding: 0 14px; font-weight: 700; }
+  .erg-main { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; padding: 14px 0 8px; }
+  .erg-lbl { color: var(--muted, #95ABBA); font-size: clamp(.95rem, 2.2vh, 1.2rem); font-weight: 600; margin: 0; }
+  .erg-hero { margin: 0; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -0.04em; line-height: .95;
+    font-size: clamp(4rem, min(19vh, 26vw), 13rem); color: var(--work, #F2B134); }
+  .erg-state { font-size: clamp(1rem, 2.4vh, 1.3rem); margin: 4px 0 14px; }
+  .erg-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  @media (min-width: 700px) { .erg-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .erg-tile { background: var(--surface, #16293A); border-radius: 14px; padding: 10px 14px; }
+  .erg-tile .v { font-size: clamp(1.6rem, min(5vh, 8.5vw), 3.4rem); font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.05; }
+  .erg-tile.key .v { color: var(--rest, #5CC8D6); }
+  .erg-ctl { display: flex; flex-wrap: wrap; gap: 10px; padding-top: 10px; }
+  .erg-big { flex: 1 1 100%; order: 2; border-radius: 18px; background: var(--work, #F2B134); color: #1A1405 !important; font-weight: 800;
+    font-size: clamp(1.3rem, 3.6vh, 2rem); min-height: clamp(64px, 10vh, 90px); }
+  .erg-big.stop { background: var(--surface-2, #1E364B); color: var(--text, #EAF1F5) !important; }
+  .erg-side { flex: 1; border-radius: 18px; background: var(--surface, #16293A); font-weight: 700; min-height: 52px; padding: 0 14px; }
+  .erg-msg { background: var(--surface, #16293A); border-radius: 14px; padding: 14px 16px; color: var(--muted, #95ABBA); margin-top: 12px; line-height: 1.45; }
+  .erg-msg b { color: var(--text, #EAF1F5); }
+  .erg-list { display: grid; gap: 8px; margin-top: 10px; }
+  .erg-row { display: flex; justify-content: space-between; gap: 10px; align-items: center; background: var(--surface, #16293A); border-radius: 12px; padding: 12px 14px; text-align: left; width: 100%; }
+  .erg-row .big { font-size: 1.25rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .erg-row small { display: block; color: var(--muted, #95ABBA); }
+  .erg-splits { width: 100%; border-collapse: collapse; margin-top: 12px; font-variant-numeric: tabular-nums; font-size: 1.05rem; }
+  .erg-splits th { text-align: left; color: var(--muted, #95ABBA); font-weight: 600; padding: 6px 4px; }
+  .erg-splits td { padding: 8px 4px; border-top: 1px solid var(--line, #2C465B); }
+  .erg-raw { font: 12px/1.4 ui-monospace, Menlo, monospace; color: var(--muted, #95ABBA); white-space: pre-wrap; word-break: break-all; margin-top: 12px; }
+  `;
+  const ui = { open: false, debug: false, detail: null };
+  let view = "live"; // live | summary | history | detail | nobt
+  let root, liveQueued = false;
+
+  function mount() {
+    const st = document.createElement("style"); st.textContent = css; document.head.appendChild(st);
+    root = document.createElement("section");
+    root.className = "erg"; root.setAttribute("role", "dialog"); root.setAttribute("aria-label", "Erg");
+    document.body.appendChild(root);
+    root.addEventListener("click", onClick);
+  }
+  function open() { ui.open = true; root.classList.add("open"); keepAwake(true); view = "live"; render(); }
+  function close() {
+    if ((session || demo.on) && !confirm("Leave the erg screen? The current piece will be saved as it is.")) return;
+    stopDemo(true); disconnect();
+    ui.open = false; root.classList.remove("open"); document.body.style.overflow = ""; keepAwake(false);
+  }
+
+  function scheduleLive() {
+    if (liveQueued || !ui.open || view !== "live") return;
+    liveQueued = true;
+    requestAnimationFrame(() => { liveQueued = false; render(); });
+  }
+
+  function statusHtml() {
+    const cls = demo.on ? "demo" : conn === "connected" ? "on" : conn === "error" ? "err" : "";
+    const text = demo.on ? "<b>Demo</b> · fake data" : conn === "connected" ? `<b>${esc(connMsg)}</b> · connected`
+      : conn === "connecting" ? esc(connMsg) : conn === "error" ? esc(connMsg) : "Not connected";
+    return `<span class="erg-dot ${cls}"></span>${text}`;
+  }
+
+  function tile(label, value, key) { return `<div class="erg-tile ${key ? "key" : ""}"><p class="erg-lbl">${label}</p><div class="v">${value}</div></div>`; }
+
+  function render() {
+    if (!root || !ui.open) return;
+    const active = conn === "connected" || demo.on;
+    let main = "", ctl = "";
+
+    if (view === "live") {
+      const st = live.workoutState;
+      const stateText = !active ? "Set up your piece on the PM5, then connect."
+        : st == null ? "Waiting for the PM5…"
+        : `${esc(WORKOUT_TYPE[live.workoutType] || "Row")} · ${esc(WORKOUT_STATE[st] || "")}${live.rowingState ? "" : st === 0 ? " · start rowing" : ""}`;
+      main = `
+        <p class="erg-lbl">Split /500 m</p>
+        <p class="erg-hero">${fmtPace(live.pace)}</p>
+        <p class="erg-state">${stateText}</p>
+        <div class="erg-grid">
+          ${tile("Avg split", fmtPace(live.avgPace), true)}
+          ${tile("Meters", fmtInt(live.distance))}
+          ${tile("Time", fmtClock(live.elapsed))}
+          ${tile("Stroke rate", live.spm ? `${live.spm}<span style="font-size:.5em;color:var(--muted)"> spm</span>` : "–")}
+          ${tile("Watts", live.pace ? fmtInt(wattsFromPace(live.pace)) : "–")}
+          ${live.hr ? tile("Heart rate", live.hr) : tile("Calories", fmtInt(live.calories))}
+        </div>
+        ${!active && conn !== "connecting" ? `<div class="erg-msg"><b>How it works:</b> set up any piece on the PM5 (Just Row, distance, time or intervals). Tap Connect and pick your PM5. Row, and the app follows the monitor and saves a summary when the piece ends.<br><br>On iPhone or iPad, open this page in the <b>Bluefy</b> browser. Only one app can connect to the PM5 at a time, so close ErgData first.</div>` : ""}
+        ${ui.debug ? `<div class="erg-raw">${esc(rawLog.join("\n") || "No data yet")}</div>` : ""}`;
+      ctl = active
+        ? `<button class="erg-side" data-a="history">History</button><button class="erg-side" data-a="debug">${ui.debug ? "Hide raw" : "Raw data"}</button>
+           <button class="erg-big stop" data-a="${demo.on ? "demoStop" : "disconnect"}">${demo.on ? "End demo piece" : "Disconnect"}</button>`
+        : `<button class="erg-side" data-a="demo">Demo</button><button class="erg-side" data-a="history">History</button>
+           <button class="erg-big" data-a="connect">${conn === "error" && device ? "Reconnect" : conn === "connecting" ? "Connecting…" : "Connect PM5"}</button>`;
+    }
+
+    if (view === "summary" || view === "detail") {
+      const r = view === "summary" ? lastSaved : ui.detail;
+      if (!r) { view = "live"; return render(); }
+      main = `
+        <p class="erg-lbl">${esc(r.workoutType)} · ${new Date(r.startedAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}${r.source === "demo" ? " · demo" : ""}${r.partial ? " · unfinished" : ""}</p>
+        <p class="erg-lbl" style="margin-top:10px">Average split /500 m</p>
+        <p class="erg-hero" style="color:var(--done,#86D39A)">${fmtPace(r.avgPace)}</p>
+        <div class="erg-grid" style="margin-top:14px">
+          ${tile("Meters", fmtInt(r.distance))}
+          ${tile("Time", fmtClock(r.time))}
+          ${tile("Avg stroke rate", r.avgSpm ?? "–")}
+          ${tile("Avg watts", fmtInt(r.avgWatts))}
+          ${tile("Avg heart rate", r.avgHr ?? "–")}
+          ${tile("Calories", fmtInt(r.calories))}
+        </div>
+        ${r.splits && r.splits.length ? `<table class="erg-splits"><tr><th>#</th><th>Meters</th><th>Time</th><th>Split</th></tr>
+          ${r.splits.map((s, i) => `<tr><td>${i + 1}</td><td>${fmtInt(s.distance)}</td><td>${fmtClock(s.time)}</td><td>${fmtPace(s.pace)}</td></tr>`).join("")}</table>` : ""}`;
+      ctl = view === "summary"
+        ? `<button class="erg-side" data-a="history">History</button><button class="erg-big" data-a="live">Done</button>`
+        : `<button class="erg-side" data-a="delete">Delete</button><button class="erg-big" data-a="history">Back</button>`;
+    }
+
+    if (view === "history") {
+      const list = loadSessions();
+      main = `<p class="erg-hero" style="font-size:clamp(2rem,6vh,3rem);color:var(--text)">Erg history</p>
+        <div class="erg-list">${list.length ? list.map((r) => `<button class="erg-row" data-a="open" data-id="${esc(r.id)}">
+          <span><span class="big">${fmtInt(r.distance)} m</span><small>${new Date(r.startedAt).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · ${esc(r.workoutType)}${r.source === "demo" ? " · demo" : ""}</small></span>
+          <span style="text-align:right"><span class="big">${fmtPace(r.avgPace)}</span><small>${fmtClock(r.time)}</small></span></button>`).join("")
+          : `<div class="erg-msg">No rows saved yet.</div>`}</div>
+        ${list.length ? `<div class="erg-msg">Sessions are stored on this device only.</div>` : ""}`;
+      ctl = `${list.length ? `<button class="erg-side" data-a="export">Export JSON</button>` : ""}<button class="erg-big" data-a="live">Back to erg</button>`;
+    }
+
+    if (view === "nobt") {
+      main = `<p class="erg-hero" style="font-size:clamp(2rem,6vh,3rem);color:var(--text)">Bluetooth isn’t available here</p>
+        <div class="erg-msg"><b>iPhone / iPad:</b> Safari (and Chrome on iPhone) can’t talk to Bluetooth devices. Install the free <b>Bluefy</b> browser from the App Store and open this same link in it.<br><br>
+        <b>Android / computer:</b> use Chrome or Edge, and make sure Bluetooth is on.<br><br>You can still try the screen with <b>Demo</b> mode.</div>`;
+      ctl = `<button class="erg-side" data-a="demo">Demo</button><button class="erg-big" data-a="live">Back</button>`;
+    }
+
+    root.innerHTML = `
+      <div class="erg-top">
+        <span class="erg-title">Erg POC</span>
+        <div class="erg-status" aria-live="polite">${statusHtml()}</div>
+      </div>
+      <div class="erg-main">${main}</div>
+      <div class="erg-ctl">${ctl}</div>`;
+  }
+
+  function onClick(e) {
+    const b = e.target.closest("[data-a]"); if (!b) return;
+    const a = b.dataset.a;
+    if (a === "close") close();
+    else if (a === "connect") { if (conn !== "connecting") connect(); }
+    else if (a === "disconnect") disconnect();
+    else if (a === "demo") { view = "live"; beep(false); startDemo(); }
+    else if (a === "demoStop") stopDemo(true);
+    else if (a === "debug") { ui.debug = !ui.debug; render(); }
+    else if (a === "history") { view = "history"; render(); }
+    else if (a === "live") { view = "live"; render(); }
+    else if (a === "open") { ui.detail = loadSessions().find((r) => r.id === b.dataset.id); view = "detail"; render(); }
+    else if (a === "delete") {
+      if (ui.detail && confirm("Delete this row?")) { saveSessions(loadSessions().filter((r) => r.id !== ui.detail.id)); view = "history"; render(); }
+    } else if (a === "export") {
+      const blob = new Blob([JSON.stringify(loadSessions(), null, 2)], { type: "application/json" });
+      const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "erg-sessions.json";
+      document.body.appendChild(link); link.click(); link.remove();
+    }
+  }
+
+  /* ---------------- hook into the page ---------------- */
+  function init() {
+    mount();
+    open();
+    // warn before leaving mid-piece
+    window.addEventListener("beforeunload", (e) => { if (session) { e.preventDefault(); e.returnValue = ""; } });
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
+})();
+
+</script>
+</body>
+</html>

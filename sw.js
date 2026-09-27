@@ -1,7 +1,7 @@
 /* Offline support. Serves cached files instantly and refreshes them in the
    background, so an updated programs.js shows up on the next launch.
    Bump VERSION if you ever want to force everyone onto fresh files. */
-const VERSION = "rowhouse-v1";
+const VERSION = "strength-v3";
 const FILES = [
   "./", "./index.html", "./programs.js", "./manifest.webmanifest",
   "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png",

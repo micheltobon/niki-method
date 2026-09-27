@@ -167,7 +167,7 @@
   const september = {
     id: "2026-09",
     title: "September 2026",
-    name: "Row House DUP Strength Block",
+    name: "DUP Strength Block",
     summary: "4-week hypertrophy accumulation block. Hold your August weights while reps climb. Goal: keep your Week 1 weight all the way to Week 4.",
     weeks: {
       1: "W1 · 5 reps × 4 sets, heavy. Find your working weight.",

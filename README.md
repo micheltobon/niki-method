@@ -1,4 +1,4 @@
-#  Strength training
+# Strength training
 
 A monthly workout calendar with a full-screen workout player: set counter, rest timer,
 3-2-1 countdowns, sounds, and a shrinking timer bar. Works offline.
@@ -7,6 +7,7 @@ A monthly workout calendar with a full-screen workout player: set counter, rest 
 - `index.html` – the app
 - `programs.js` – the workout data (one entry per month)
 - `sw.js`, `manifest.webmanifest`, `icons/` – make it an installable offline app
+- `erg.html` – standalone Concept2 PM5 Bluetooth proof of concept (see `ERG-PLAN.md`)
 
 Keep all files together in the same folder.
 
@@ -15,12 +16,12 @@ Open `index.html` in Chrome, Edge, Safari or Firefox. Everything works except
 "install as an app", which needs the GitHub Pages link.
 
 ## Put it on GitHub Pages
-1. Create a new public repository on github.com (for example `rowhouse`).
+1. Create a new public repository on github.com (this one is `niki-method`).
 2. Click **Add file → Upload files**, drag in everything from this folder
    (including the `icons` folder), then **Commit changes**.
 3. Go to **Settings → Pages**. Under **Branch**, pick `main` and `/ (root)`, then **Save**.
 4. After about a minute your link appears there:
-   `https://YOUR-USERNAME.github.io/rowhouse/`
+   `https://micheltobon.github.io/niki-method/`
 
 Share that link. Anyone can open it; nobody needs a GitHub account.
 

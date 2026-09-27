@@ -89,6 +89,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--work); outl
 }
 .cell:hover { background: var(--surface-2); }
 .cell .d { font-size: 1.5rem; font-weight: 800; line-height: 1; }
+.cell .d .mon { display: block; font-size: .7rem; font-weight: 700; color: var(--work); margin-top: 2px; text-transform: uppercase; letter-spacing: .04em; }
 .cell .id { font-size: .8rem; color: var(--muted); font-weight: 600; }
 .cell .pat { font-size: .82rem; color: var(--text); opacity: .85; line-height: 1.25; margin-top: auto; }
 .cell .pat .long { display: none; }
@@ -358,6 +359,43 @@ const qp = new URLSearchParams(location.search);
 const TODAY = qp.get("today") || isoLocal(new Date());   // ?today=2026-09-23 for testing
 
 const PROGRAMS = (window.PROGRAMS || []).slice().sort((a, b) => a.id.localeCompare(b.id));
+const addDays = (iso, n) => { const d = parseDate(iso); d.setDate(d.getDate() + n); return isoLocal(d); };
+const firstDate = (p) => p.days.reduce((m, d) => (d.date < m ? d.date : m), p.days[0].date);
+const lastDate = (p) => p.days.reduce((m, d) => (d.date > m ? d.date : m), p.days[0].date);
+
+/* ============ repeat the last program in 4-week cycles ============
+   After the newest month in programs.js ends, the same block restarts the
+   following Tuesday as W1. Each cycle is named after the month most of its
+   days fall in (Sep 29 – Oct 24 = October). Adding a real month to
+   programs.js later takes over automatically. */
+(function repeatCycles() {
+  if (!PROGRAMS.length) return;
+  const base = PROGRAMS[PROGRAMS.length - 1];
+  const weeks = new Set(base.days.map((d) => d.id.match(/^W(\d+)/)[1])).size;
+  const step = weeks * 7;
+  const horizon = addDays(TODAY, 28);           // show the next cycle once it's close
+  let prevTitle = base.title;
+  for (let k = 1; k < 120; k++) {
+    const days = base.days.map((d) => ({ ...JSON.parse(JSON.stringify(d)), date: addDays(d.date, step * k) }));
+    const first = days.reduce((m, d) => (d.date < m ? d.date : m), days[0].date);
+    if (first > horizon) break;
+    const last = days.reduce((m, d) => (d.date > m ? d.date : m), days[0].date);
+    const counts = {};
+    days.forEach((d) => { const key = d.date.slice(0, 7); counts[key] = (counts[key] || 0) + 1; });
+    const month = Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0];
+    let title = parseDate(month + "-01").toLocaleDateString(undefined, { month: "long", year: "numeric" });
+    if (title === prevTitle) title += " (2)";
+    prevTitle = title;
+    PROGRAMS.push({
+      ...base,
+      id: `${base.id}+${k}`,
+      title,
+      name: `${fmtShort(first)} – ${fmtShort(last)}`,
+      summary: `Same 4-week block as ${base.title}, restarted. ${base.summary}`,
+      days,
+    });
+  }
+})();
 const ALL_DAYS = PROGRAMS.flatMap((p) => p.days);
 const dayById = Object.fromEntries(ALL_DAYS.map((d) => [d.id + "@" + d.date, d]));
 const dayKey = (d) => d.id + "@" + d.date;
@@ -394,8 +432,9 @@ ALL_DAYS.forEach((d) => {
   d._prepared = true;
 });
 
-let progIdx = Math.max(0, PROGRAMS.findIndex((p) => p.days.some((d) => d.date.slice(0, 7) === TODAY.slice(0, 7))));
-if (PROGRAMS.length && !PROGRAMS[progIdx].days.some((d) => d.date.slice(0, 7) === TODAY.slice(0, 7))) progIdx = PROGRAMS.length - 1;
+// show the cycle that includes today, or the next one coming up
+let progIdx = PROGRAMS.findIndex((p) => lastDate(p) >= TODAY);
+if (progIdx < 0) progIdx = PROGRAMS.length - 1;
 
 /* ============ toast ============ */
 let toastTimer;
@@ -518,7 +557,7 @@ function renderCalendar() {
       const done = doneDays[dayKey(d)];
       html += `<button class="${cls.join(" ")}" data-day="${esc(dayKey(d))}" aria-label="${esc(fmtLong(d.date) + ", " + d.id + ", " + d.pattern + (done ? ", completed" : ""))}">
         ${done ? '<span class="check">✓</span>' : ""}
-        <span class="d">${parseDate(d.date).getDate()}</span>
+        <span class="d">${parseDate(d.date).getDate()}${parseDate(d.date).getDate() === 1 || d.date === firstDate(prog) ? `<small class="mon">${esc(parseDate(d.date).toLocaleDateString(undefined, { month: "short" }))}</small>` : ""}</span>
         <span class="id">${esc(d.id)}</span>
         <span class="pat"><span class="short">${esc(shortPattern(d.pattern))}</span><span class="long">${esc(d.pattern)}</span></span>
       </button>`;
