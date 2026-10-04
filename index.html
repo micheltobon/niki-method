@@ -174,6 +174,11 @@ button:focus-visible, input:focus-visible { outline: 3px solid var(--work); outl
 .pmove { font-size: clamp(1.8rem, 5.2vh, 3.6rem); font-weight: 800; line-height: 1.08; letter-spacing: -0.015em; margin: 4px 0 0; }
 .pmove small { display: block; font-size: clamp(1.05rem, 2.6vh, 1.6rem); font-weight: 500; color: var(--muted); letter-spacing: 0; margin-top: 2px; }
 .pmove + .pmove { margin-top: 14px; }
+.look { position: relative; display: inline-flex; align-items: center; justify-content: center; width: max(.8em, 32px); height: max(.8em, 32px); margin-left: .25em; vertical-align: middle; border-radius: 50%; background: var(--surface-2); color: var(--muted); text-decoration: none; }
+.look svg { width: 55%; height: 55%; }
+.look::after { content: ""; position: absolute; inset: -8px; }
+.look:hover, .look:active { color: var(--text); }
+.look:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .plus { color: var(--muted); font-size: clamp(1rem, 2.4vh, 1.4rem); margin: 8px 0 0; }
 .ppresc { margin: 10px 0 0; font-size: clamp(1.05rem, 2.6vh, 1.5rem); color: var(--text); }
 .ppresc span { color: var(--muted); }
@@ -343,6 +348,11 @@ let soundOn = store.get("rh.sound", true);
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+// Google Images search for an exercise: expand gym shorthand and drop sides so it searches well
+const searchTerm = (name) => name.replace(/^Row( hard| paddle)?$/, "rowing machine")
+  .replace(/\bTRX \/ band\b/gi, "TRX").replace(/\bDB\b/g, "dumbbell").replace(/\bRDL\b/g, "Romanian deadlift").replace(/\bOH\b/g, "overhead")
+  .replace(/,?\s+([Ll]eft|[Rr]ight|L|R)$/, "").trim() + " exercise";
+const lookLink = (name) => `<a class="look" href="https://www.google.com/search?tbm=isch&amp;q=${encodeURIComponent(searchTerm(name))}" target="_blank" rel="noopener" aria-label="Show images of ${esc(name)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg></a>`;
 const pad = (n) => String(n).padStart(2, "0");
 const isoLocal = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const parseDate = (iso) => { const [y, m, d] = iso.split("-").map(Number); return new Date(y, m - 1, d); };
@@ -827,7 +837,7 @@ function render() {
 
   /* ---- sets ---- */
   if (b.kind === "sets") {
-    const moves = b.movements.map((m, i) => `${i ? '<p class="plus">then</p>' : ""}<p class="pmove">${esc(m.name)}<small>${esc(m.detail || "")}</small></p>`).join("");
+    const moves = b.movements.map((m, i) => `${i ? '<p class="plus">then</p>' : ""}<p class="pmove">${esc(m.name)} ${lookLink(m.name)}<small>${esc(m.detail || "")}</small></p>`).join("");
     const restSec = P.restOverride ?? b.rest;
     const wInputs = b.movements.filter((m) => m.weight).map((m) => {
       const key = slug(m.name), cur = weights[key]?.[dayKey(d)] ?? "", lw = lastWeight(key);
@@ -872,7 +882,7 @@ function render() {
   /* ---- intervals ---- */
   if (b.kind === "intervals") {
     const running = P.phase === "running" || P.phase === "paused";
-    const list = b.intervals.map(([n, s, t], i) => `<div class="${t === "work" ? "" : t} ${running && i === P.ii ? "cur" : ""}"><span>${esc(n)}</span><span class="tnum" style="font-size:inherit;margin:0;letter-spacing:0">${s} s</span></div>`).join("");
+    const list = b.intervals.map(([n, s, t], i) => `<div class="${t === "work" ? "" : t} ${running && i === P.ii ? "cur" : ""}"><span>${esc(n)}${t === "work" ? ` ${lookLink(n)}` : ""}</span><span class="tnum" style="font-size:inherit;margin:0;letter-spacing:0">${s} s</span></div>`).join("");
     if (P.phase === "ready") {
       main.innerHTML = head + `<p class="pmove">Timed block<small>${esc(prescription(b))}</small></p>
         <div class="ivl">${list}</div>
@@ -898,7 +908,7 @@ function render() {
       nxt = b.intervals[k][0]; break;
     }
     main.innerHTML = head + `<div class="timer" style="margin-top:0;padding-top:4px">
-      <p class="tlabel" style="font-size:clamp(2rem,6vh,4rem);color:${type === "work" ? "var(--text)" : "var(--accent)"}">${type === "change" ? "Change" : esc(name)}</p>
+      <p class="tlabel" style="font-size:clamp(2rem,6vh,4rem);color:${type === "work" ? "var(--text)" : "var(--accent)"}">${type === "change" ? "Change" : esc(name)}${type === "work" ? ` ${lookLink(name)}` : ""}</p>
       <p class="tnext" style="${type === "change" ? "font-size:clamp(1.4rem,4vh,2.4rem);color:var(--text)" : ""}">${nxt ? `${type === "change" ? "Get ready" : "Next"}: ${esc(nxt)}` : "Last one"}</p></div>
       <div class="timer"><div class="tnum" id="tNum">${fmtTime(P.phase === "paused" ? P.remain : remaining())}</div>
       <div class="track"><div class="fill" id="tFill" style="transform:scaleX(${P.phase === "paused" ? P.remain / P.dur : 1})"></div></div>
@@ -915,7 +925,7 @@ function render() {
   /* ---- amrap ---- */
   if (b.kind === "amrap" || b.kind === "timer") {
     const isTimer = b.kind === "timer";
-    const moves = isTimer ? `<p class="pmove">Stretch</p><p class="ppresc">${esc(b.text)}</p>` : b.movements.map((m, i) => `${i ? '<p class="plus">then</p>' : ""}<p class="pmove">${esc(m.name)}<small>${esc(m.detail || "")}</small></p>`).join("");
+    const moves = isTimer ? `<p class="pmove">Stretch</p><p class="ppresc">${esc(b.text)}</p>` : b.movements.map((m, i) => `${i ? '<p class="plus">then</p>' : ""}<p class="pmove">${esc(m.name)} ${lookLink(m.name)}<small>${esc(m.detail || "")}</small></p>`).join("");
     const noteLine = b.note ? `<p class="pnote">${esc(b.note)}</p>` : "";
     if (P.phase === "ready") {
       main.innerHTML = head + `<div class="pmoves">${moves}</div>${isTimer ? "" : `<p class="ppresc">${esc(prescription(b))}</p>`}${noteLine}`;
